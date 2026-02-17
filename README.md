@@ -55,6 +55,7 @@ navi.register(function(msg)
         navi.say(msg.channel_id, "Pong! 🏓")
     end
 end)
+```
 
 # Navi Bot Lua API Reference 🧚
 

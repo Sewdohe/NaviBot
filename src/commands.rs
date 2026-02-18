@@ -1,6 +1,7 @@
 use crate::types::{Context, Error};
 use poise::serenity_prelude as serenity;
 use mlua::prelude::*;
+use poise::serenity_prelude::CreateCommandOption;
 
 #[poise::command(prefix_command, owners_only)]
 pub async fn run_lua(ctx: Context<'_>, #[rest] code: String) -> Result<(), Error> {
@@ -60,23 +61,50 @@ pub async fn reload(ctx: Context<'_>) -> Result<(), Error> {
 pub async fn sync(ctx: Context<'_>) -> Result<(), Error> {
     let data = ctx.data();
 
-    // 1. Build Commands from Lua
     let commands_builder = {
         let lua = data.lua.lock().unwrap();
         let navi: LuaTable = lua.globals().get("navi")?;
         let slash_cmds: LuaTable = navi.get("slash_commands")?;
 
         let mut commands = Vec::new();
+
         for pair in slash_cmds.pairs::<String, LuaTable>() {
             let (name, data) = pair?;
             let desc: String = data.get("description")?;
-            let command = serenity::CreateCommand::new(name).description(desc);
+            
+            let mut command = serenity::CreateCommand::new(name).description(desc);
+
+            // HANDLE OPTIONS
+            if let Ok(options) = data.get::<_, Vec<LuaTable>>("options") {
+                for opt in options {
+                    let name: String = opt.get("name")?;
+                    let desc: String = opt.get("description")?;
+                    let type_str: String = opt.get("type")?;
+                    let required: bool = opt.get("required").unwrap_or(false);
+
+                    // Map string types to Discord types
+                    let kind = match type_str.as_str() {
+                        "string" => serenity::CommandOptionType::String,
+                        "integer" => serenity::CommandOptionType::Integer,
+                        "boolean" => serenity::CommandOptionType::Boolean,
+                        "user" => serenity::CommandOptionType::User,
+                        "channel" => serenity::CommandOptionType::Channel,
+                        "role" => serenity::CommandOptionType::Role,
+                        "number" => serenity::CommandOptionType::Number,
+                        _ => serenity::CommandOptionType::String,
+                    };
+
+                    let option = CreateCommandOption::new(kind, name, desc).required(required);
+                    command = command.add_option(option);
+                }
+            }
+
             commands.push(command);
         }
         commands 
     };
 
-    // 2. Sync to Discord
+    // (The rest of the sync function stays the same)
     let http = ctx.http();
     if let Some(guild_id) = ctx.guild_id() {
         ctx.say("⏳ Syncing commands...").await?;

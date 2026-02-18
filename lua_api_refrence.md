@@ -137,6 +137,75 @@ Found inside the `msg.mentions` list.
 
 ---
 
+## 5. Slash Command Registration
+
+### `navi.create_slash(name, description, options, callback)`
+Registers a slash command with Discord. These commands appear in the `/` menu.
+
+* **Parameters:**
+    * `name` (string): The command name (lowercase, no spaces).
+    * `description` (string): The help text shown in Discord.
+    * `options` (table): A list of arguments the command accepts (see [Option Structure](#option-structure)). **Pass `{}` if no arguments are needed.**
+    * `callback` (function): The function to run. Receives a `ctx` object.
+
+* **Example (No Arguments):**
+    ```lua
+    navi.create_slash("hello", "Says hi", {}, function(ctx)
+        ctx.reply("Hello " .. ctx.username)
+    end)
+    ```
+
+* **Example (With Arguments):**
+    ```lua
+    navi.create_slash("greet", "Greets a user", {
+        { name = "user", description = "Who to greet", type = "user", required = true },
+        { name = "shout", description = "Yell it?", type = "boolean", required = false }
+    }, function(ctx)
+        local target = ctx.args.user -- Returns User ID
+        local shout = ctx.args.shout -- Returns "true" or "false" string
+        
+        ctx.reply("Target ID: " .. target)
+    end)
+    ```
+
+#### <a name="option-structure"></a> Option Structure
+Each option in the list must be a table with these fields:
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `name` | `string` | The argument name (e.g. "amount"). |
+| `description` | `string` | Help text for this argument. |
+| `type` | `string` | One of: `"string"`, `"integer"`, `"boolean"`, `"user"`, `"channel"`, `"role"`. |
+| `required` | `boolean` | (Optional) Is this argument mandatory? Default: `false`. |
+
+---
+
+### <a name="slash-context"></a> Slash `Context` Object
+Passed to the `create_slash` callback.
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `ctx.user_id` | `string` | The ID of the user who ran the command. |
+| `ctx.username` | `string` | The username of the command runner. |
+| `ctx.args` | `table` | **NEW:** A Key-Value table of arguments provided by the user. |
+| `ctx.reply(msg)` | `function` | Sends a response message to the channel. |
+
+#### Argument Type Mapping
+The values in `ctx.args` now preserve their native types from Discord:
+
+| Discord Option Type | Lua Type | Notes |
+| :--- | :--- | :--- |
+| `STRING` | `string` | Standard text. |
+| `INTEGER` | `number` | A whole number (e.g. `42`). |
+| `NUMBER` | `number` | A float/decimal (e.g. `3.14`). |
+| `BOOLEAN` | `boolean` | Real `true` / `false`. |
+| `USER` / `ROLE` / `CHANNEL` | `string` | **IDs are strings.** We keep them as strings to prevent precision loss with large IDs. |
+
+* **Example Usage:**
+    ```lua
+    local amount = ctx.args.amount -- This is a number! You can do math immediately.
+    local is_vip = ctx.args.vip    -- This is a boolean! You can do 'if is_vip then'.
+    ```
+
 ## 🐛 Troubleshooting
 
 * **Nil Errors:** Always check if a value exists before using it. `navi.db.get` returns `nil` if the key is missing. Use `or` to provide defaults:

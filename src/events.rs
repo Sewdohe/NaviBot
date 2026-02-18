@@ -1,6 +1,6 @@
 use crate::types::{Data, Error};
+use mlua::{Function, Table};
 use poise::serenity_prelude as serenity;
-use mlua::{Table, Function};
 
 pub async fn event_handler(
     ctx: &serenity::Context,
@@ -8,10 +8,11 @@ pub async fn event_handler(
     _framework: poise::FrameworkContext<'_, Data, Error>,
     data: &Data,
 ) -> Result<(), Error> {
-    
     // 1. MESSAGE HANDLER
     if let serenity::FullEvent::Message { new_message } = event {
-        if new_message.author.bot { return Ok(()); }
+        if new_message.author.bot {
+            return Ok(());
+        }
 
         let content = new_message.content.clone();
         let author = new_message.author.name.clone();
@@ -61,18 +62,55 @@ pub async fn event_handler(
     // 2. SLASH COMMAND HANDLER
     if let serenity::FullEvent::InteractionCreate { interaction } = event {
         if let serenity::Interaction::Command(command) = interaction {
-            
             let cmd_name = command.data.name.clone();
             let user_id = command.user.id.get();
             let username = command.user.name.clone();
-            
+
+            // --- STEP A: PREPARE DATA ---
+
+            // 1. Define a temporary container for our types
+            // This holds the data SAFELY before we lock Lua.
+            enum ArgValue {
+                String(String),
+                Integer(i64),
+                Boolean(bool),
+                Number(f64),
+            }
+
+            // 2. Parse Discord Options into our Container
+            let mut args_map: Vec<(String, ArgValue)> = Vec::new();
+
+            for option in &command.data.options {
+                let name = option.name.clone();
+
+                let value = match &option.value {
+                    // Map Discord types to our Rust Container
+                    serenity::CommandDataOptionValue::String(s) => ArgValue::String(s.clone()),
+                    serenity::CommandDataOptionValue::Integer(i) => ArgValue::Integer(*i),
+                    serenity::CommandDataOptionValue::Boolean(b) => ArgValue::Boolean(*b),
+                    serenity::CommandDataOptionValue::Number(n) => ArgValue::Number(*n),
+
+                    // IDs (User/Role/Channel) are best sent as Strings to Lua
+                    // (Lua numbers lose precision on huge 64-bit IDs)
+                    serenity::CommandDataOptionValue::User(u) => ArgValue::String(u.to_string()),
+                    serenity::CommandDataOptionValue::Channel(c) => ArgValue::String(c.to_string()),
+                    serenity::CommandDataOptionValue::Role(r) => ArgValue::String(r.to_string()),
+
+                    _ => ArgValue::String("unknown".to_string()),
+                };
+
+                args_map.push((name, value));
+            }
+
             let http = ctx.http.clone();
             let interaction_id = command.id;
             let interaction_token = command.token.clone();
 
+            // --- STEP B: LOCK LUA ---
             {
                 let lua = data.lua.lock().unwrap();
 
+                // (Standard Callback Fetching...)
                 let callback: Option<Function> = (|| {
                     let globals = lua.globals();
                     let navi: Table = globals.get("navi").ok()?;
@@ -86,16 +124,32 @@ pub async fn event_handler(
                         let _ = ctx_table.set("user_id", user_id);
                         let _ = ctx_table.set("username", username);
 
+                        // 3. INJECT ARGUMENTS WITH TYPES
+                        let args_table = lua.create_table()?;
+                        for (k, v) in args_map {
+                            match v {
+                                // Lua can handle these types natively now!
+                                ArgValue::String(s) => args_table.set(k, s)?,
+                                ArgValue::Integer(i) => args_table.set(k, i)?,
+                                ArgValue::Boolean(b) => args_table.set(k, b)?,
+                                ArgValue::Number(n) => args_table.set(k, n)?,
+                            }
+                        }
+                        ctx_table.set("args", args_table)?;
+
+                        // (Standard Reply Function...)
                         let reply_fn = lua.create_function(move |_, msg: String| {
                             let http = http.clone();
                             let token = interaction_token.clone();
                             let id = interaction_id;
-
                             tokio::spawn(async move {
                                 let response = serenity::CreateInteractionResponse::Message(
-                                    serenity::CreateInteractionResponseMessage::new().content(msg)
+                                    serenity::CreateInteractionResponseMessage::new().content(msg),
                                 );
-                                if let Err(e) = http.create_interaction_response(id, &token, &response, vec![]).await {
+                                if let Err(e) = http
+                                    .create_interaction_response(id, &token, &response, vec![])
+                                    .await
+                                {
                                     println!("Error replying: {}", e);
                                 }
                             });

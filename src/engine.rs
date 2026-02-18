@@ -120,12 +120,15 @@ pub async fn init(ctx: &serenity::Context) -> Result<Data, Error> {
 
     // Slash
     navi.set("slash_commands", lua.create_table()?)?;
-    navi.set("create_slash", lua.create_function(|lua, (name, desc, func): (String, String, Function)| {
+    navi.set("create_slash", lua.create_function(|lua, (name, desc, options, func): (String, String, LuaValue, Function)| {
         let navi: LuaTable = lua.globals().get("navi")?;
         let slash_cmds: LuaTable = navi.get("slash_commands")?;
+        
         let cmd_data = lua.create_table()?;
         cmd_data.set("description", desc)?;
+        cmd_data.set("options", options)?; // Save the options for the !sync command
         cmd_data.set("callback", func)?;
+        
         slash_cmds.set(name.clone(), cmd_data)?;
         println!("   > Registered Slash: /{}", name);
         Ok(())

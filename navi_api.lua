@@ -58,3 +58,22 @@ _G.navi = navi
 ---@param channel_id string|number
 ---@param embed Embed
 function navi.send_embed(channel_id, embed) end
+
+---Registers a new Slash Command (e.g. /ping)
+---@param name string The command name (lowercase, no spaces)
+---@param description string The help text shown in Discord
+---@param options SlashOption[]|nil A list of arguments (pass {} if none)
+---@param callback fun(ctx: SlashContext) The function to run
+function navi.create_slash(name, description, options, callback) end
+
+---@class SlashOption
+---@field name string The argument name (e.g. "amount")
+---@field description string Help text for this argument
+---@field type "string"|"integer"|"boolean"|"user"|"channel"|"role"|"number" The type of input
+---@field required? boolean Is this argument mandatory? (Default: false)
+
+---@class SlashContext
+---@field user_id string The ID of the user who ran the command
+---@field username string The username of the command runner
+---@field args table<string, string|number|boolean> Key-Value table of arguments. IDs are strings; Ints/Bools are native.
+---@field reply fun(message: string) Sends a response message to the channel

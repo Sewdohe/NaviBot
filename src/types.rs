@@ -2,7 +2,27 @@ use std::sync::{Arc, Mutex};
 use mlua::Lua;
 use rusqlite::Connection;
 use serde::Deserialize;
+use tokio::sync::mpsc::UnboundedSender;
 
+// Events: Bot -> TUI
+// "Hey TUI, this just happened"
+#[derive(Debug)]
+pub enum BotEvent {
+    Log(String),
+    Status { uptime: String, shard_id: u32 },
+    UserJoined(String),
+}
+
+// Commands: TUI -> Bot
+// "Hey Bot, do this!"
+#[derive(Debug)]
+pub enum AdminCommand {
+    Shutdown,
+    Reload,
+    SendMessage { channel_id: u64, content: String },
+}
+
+// ------------------------------------------------------------------
 // 1. Core Types
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 pub type Context<'a> = poise::Context<'a, Data, Error>;
@@ -12,7 +32,8 @@ pub type Context<'a> = poise::Context<'a, Data, Error>;
 // This Context holds "Data" (your custom state) and "Error" (what happens if it fails).
 pub struct Data {
     pub lua: Arc<Mutex<Lua>>,
-    pub db: Arc<Mutex<Connection>>, // Added this to match your code
+    pub db: Arc<Mutex<Connection>>,
+    pub tui_tx: UnboundedSender<BotEvent>,
 }
 
 // 2. Embed Structs (Needed for send_embed)

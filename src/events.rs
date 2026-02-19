@@ -168,5 +168,50 @@ pub async fn event_handler(
         }
     }
 
+// 3. REACTION ADD HANDLER
+    if let serenity::FullEvent::ReactionAdd { add_reaction } = event {
+        // OPEN SCOPE: Start the lock lifetime here
+        { 
+            let ctx_lua = data.lua.lock().unwrap();
+            
+            // Try to get the function
+            if let Ok(callback) = ctx_lua.globals().get::<_, mlua::Function>("on_reaction_add") {
+                if let Ok(table) = ctx_lua.create_table() {
+                    let _ = table.set("user_id", add_reaction.user_id.map(|u| u.get().to_string()));
+                    let _ = table.set("channel_id", add_reaction.channel_id.get().to_string());
+                    let _ = table.set("message_id", add_reaction.message_id.get().to_string());
+                    let _ = table.set("guild_id", add_reaction.guild_id.map(|g| g.get().to_string()));
+                    let _ = table.set("emoji", add_reaction.emoji.to_string());
+                    
+                    if let Err(e) = callback.call::<_, ()>(table) {
+                        println!("❌ Lua Reaction Error: {}", e);
+                    }
+                }
+            };
+        } 
+        // CLOSE SCOPE: Lock is dropped here, guaranteed safe.
+    }
+
+    // 4. REACTION REMOVE HANDLER
+    if let serenity::FullEvent::ReactionRemove { removed_reaction } = event {
+        {
+            let ctx_lua = data.lua.lock().unwrap();
+            
+            if let Ok(callback) = ctx_lua.globals().get::<_, mlua::Function>("on_reaction_remove") {
+                if let Ok(table) = ctx_lua.create_table() {
+                    let _ = table.set("user_id", removed_reaction.user_id.map(|u| u.get().to_string()));
+                    let _ = table.set("channel_id", removed_reaction.channel_id.get().to_string());
+                    let _ = table.set("message_id", removed_reaction.message_id.get().to_string());
+                    let _ = table.set("guild_id", removed_reaction.guild_id.map(|g| g.get().to_string()));
+                    let _ = table.set("emoji", removed_reaction.emoji.to_string());
+
+                    if let Err(e) = callback.call::<_, ()>(table) {
+                        println!("❌ Lua Reaction Error: {}", e);
+                    }
+                }
+            };
+        }
+    }
+
     Ok(())
 }

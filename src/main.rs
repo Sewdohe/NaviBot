@@ -24,10 +24,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // --- CLONING STATION ---
         // We need separate copies of the "Phone" for different parts of the code.
-        
+
         // Copy 1: Goes into the Framework Setup (consumed by the move)
         let tx_for_setup = tx_to_tui.clone();
-        
+
         // Copy 2: Stays here for the Admin Loop
         let tx_for_loop = tx_to_tui.clone();
 
@@ -51,27 +51,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 })
                 .setup(move |ctx, _ready, framework| {
                     Box::pin(async move {
-                        poise::builtins::register_globally(ctx, &framework.options().commands).await?;
+                        poise::builtins::register_globally(ctx, &framework.options().commands)
+                            .await?;
 
                         let tx_for_engine = tx_for_setup.clone();
                         let data = engine::init(ctx, tx_for_engine).await?;
 
-                        // --- NEW: Auto-Sync Logic ---
-                        
-                        // 1. Get the commands (Synchronously)
+                        // 1. Get commands (Force drop lock immediately)
                         let commands = {
                             let lua = data.lua.lock().unwrap();
                             engine::read_slash_commands(&lua)?
                         };
+                        // <--- The Lock is 100% dead here
 
-                        // 2. Upload them (Asynchronously)
-                        let sync_report = engine::upload_slash_commands(&ctx.http, commands).await?;
-                        
-                        // Log it
-                        println!("{}", sync_report);
+                        // 2. Upload
+                        let sync_report =
+                            engine::upload_slash_commands(&ctx.http, commands).await?;
+
                         let _ = tx_for_setup.send(BotEvent::Log(sync_report));
                         let _ = tx_for_setup.send(BotEvent::Log("✅ Bot is Online!".into()));
-                        
+
                         Ok(data)
                     })
                 })

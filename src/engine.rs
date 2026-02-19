@@ -1,30 +1,32 @@
-use crate::types::{Data, Error, LuaEmbed, BotEvent}; // Added BotEvent
-use poise::serenity_prelude as serenity;
+use crate::types::{BotEvent, Data, Error, LuaEmbed};
 use mlua::prelude::*;
+use mlua::Function;
+use mlua::{StdLib, LuaOptions};
+use poise::serenity_prelude as serenity;
 use rusqlite::{Connection, OptionalExtension};
-use std::sync::{Arc, Mutex};
+use serenity::{CreateCommand, CreateCommandOption};
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc::UnboundedSender;
 
-// --- NEW HELPER: Load Plugins ---
+// --- HELPER: Load Plugins ---
 pub fn load_plugins(lua: &Lua) -> String {
     // 1. Reset Event Bus
-    // We wrap this in a block to handle errors gracefully
     let result: LuaResult<()> = (|| {
         let navi: LuaTable = lua.globals().get("navi")?;
         navi.set("listeners", lua.create_table()?)?;
         Ok(())
     })();
-    
+
     if let Err(e) = result {
         return format!("❌ Failed to reset listeners: {}", e);
     }
 
     // 2. Read Files
     let mut count = 0;
+    let mut details = String::new();
     let mut error_msg = None;
-    
-    // Ensure plugins directory exists
+
     if !Path::new("plugins").exists() {
         return "⚠️ 'plugins/' folder not found!".to_string();
     }
@@ -37,11 +39,11 @@ pub fn load_plugins(lua: &Lua) -> String {
                     if let Ok(code) = std::fs::read_to_string(&p) {
                         let chunk = lua.load(&code).set_name(p.to_string_lossy());
                         if let Err(e) = chunk.exec() {
-                            error_msg = Some(format!("❌ Error in {:?}: \n```{}```", p, e));
+                            error_msg = Some(format!("❌ Error in {:?}: \n{}", p, e));
                             break;
                         }
                         count += 1;
-                        println!("   > Loaded plugin: {:?}", p.file_name().unwrap());
+                        details.push_str(&format!("Loaded: {:?}\n", p.file_name().unwrap()));
                     }
                 }
             }
@@ -55,20 +57,23 @@ pub fn load_plugins(lua: &Lua) -> String {
     }
 }
 
-// PHASE 1: Read from Lua (Synchronous, needs Lock)
-pub fn read_slash_commands(lua: &Lua) -> Result<Vec<serenity::CreateCommand>, Error> {
+// --- HELPER: Read Slash Commands (Sync) ---
+pub fn read_slash_commands(lua: &Lua) -> Result<Vec<CreateCommand>, Error> {
     let navi: LuaTable = lua.globals().get("navi")?;
-    let slash_cmds: LuaTable = navi.get("slash_commands")?;
+    // Gracefully handle if slash_commands table doesn't exist yet
+    let slash_cmds: LuaTable = match navi.get("slash_commands") {
+        Ok(t) => t,
+        Err(_) => return Ok(Vec::new()),
+    };
 
     let mut commands = Vec::new();
-    
+
     for pair in slash_cmds.pairs::<String, LuaTable>() {
         let (name, data) = pair?;
         let desc: String = data.get("description")?;
-        
-        let mut command = serenity::CreateCommand::new(name).description(desc);
 
-        // Handle Options
+        let mut command = CreateCommand::new(name).description(desc);
+
         if let Ok(options) = data.get::<_, Vec<LuaTable>>("options") {
             for opt in options {
                 let name: String = opt.get("name")?;
@@ -87,23 +92,24 @@ pub fn read_slash_commands(lua: &Lua) -> Result<Vec<serenity::CreateCommand>, Er
                     _ => serenity::CommandOptionType::String,
                 };
 
-                let option = serenity::CreateCommandOption::new(kind, name, desc).required(required);
+                let option = CreateCommandOption::new(kind, name, desc).required(required);
                 command = command.add_option(option);
             }
         }
         commands.push(command);
     }
-    
+
     Ok(commands)
 }
 
-// PHASE 2: Upload to Discord (Async, NO Lock allowed)
-pub async fn upload_slash_commands(http: &serenity::Http, commands: Vec<serenity::CreateCommand>) -> Result<String, Error> {
-    // Fetch all guilds the bot is in
+// --- HELPER: Upload Slash Commands (Async) ---
+pub async fn upload_slash_commands(
+    http: &serenity::Http,
+    commands: Vec<CreateCommand>,
+) -> Result<String, Error> {
     let guilds = http.get_guilds(None, None).await?;
     let count = guilds.len();
-    
-    // Upload the command list to every guild
+
     for guild in guilds {
         guild.id.set_commands(http, commands.clone()).await?;
     }
@@ -111,35 +117,234 @@ pub async fn upload_slash_commands(http: &serenity::Http, commands: Vec<serenity
     Ok(format!("✅ Synced slash commands to {} guilds.", count))
 }
 
+// --- ENGINE INITIALIZATION ---
 pub async fn init(
-    ctx: &serenity::Context, 
-    tui_tx: UnboundedSender<BotEvent>
+    ctx: &serenity::Context,
+    tui_tx: UnboundedSender<BotEvent>,
 ) -> Result<Data, Error> {
-    println!("--- Engine Initialization ---");
+    let _ = tui_tx.send(BotEvent::Log("--- Engine Initialization ---".into()));
 
-    let lua = Lua::new();
+    let libs = StdLib::ALL_SAFE | StdLib::DEBUG;
+    let lua = unsafe { 
+        Lua::unsafe_new_with(libs, LuaOptions::default())
+    };
 
-    // ... (KEEP ALL YOUR EXISTING DB AND API SETUP CODE HERE) ...
-    // ... (Database setup, navi.say, navi.db, navi.listeners, etc.) ...
-    
-    // [PASTE THE MIDDLE PART OF YOUR OLD INIT FUNCTION HERE]
-    // For brevity, I am skipping the boilerplate we wrote before.
-    // Make sure you define the 'navi' table, DB, and registries BEFORE running plugins.
-
-    // === START OF OLD INIT BOILERPLATE (Re-paste this from your file) ===
+    // 1. DATABASE
     let conn = Connection::open("navi.db").expect("Failed to open DB");
-    conn.execute("CREATE TABLE IF NOT EXISTS kv_store (key TEXT PRIMARY KEY, value TEXT)", ()).unwrap();
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS kv_store (key TEXT PRIMARY KEY, value TEXT)",
+        (),
+    )
+    .expect("Failed to create DB table");
     let db = Arc::new(Mutex::new(conn));
+
+    // 2. CREATE 'navi' TABLE
     let navi = lua.create_table()?;
-    // ... setup navi.say, navi.db, registries ...
+
+    // --- LOGGING (Intercept print) ---
+    let tx_log = tui_tx.clone();
+    navi.set("log", lua.create_function(move |_, msg: String| {
+        let _ = tx_log.send(BotEvent::Log(msg));
+        Ok(())
+    })?)?;
+
+    // 2. Overwrite global print() (Lua side)
+    // We do this immediately so it applies to all plugins loaded later.
+    lua.load(r#"
+        -- Save the old print just in case
+        local old_print = print
+        
+        -- New Print Function
+        _G.print = function(...)
+            local args = {...}
+            local parts = {}
+            for i, v in ipairs(args) do
+                table.insert(parts, tostring(v))
+            end
+            local msg = table.concat(parts, "\t")
+            
+            -- Get the caller's filename
+            local info = debug.getinfo(2, "S")
+            local source = info and info.short_src or "Unknown"
+            
+            -- Clean up path: "plugins/hello.lua" -> "hello.lua"
+            source = source:gsub("plugins[/\\]", "")
+            
+            -- Send to TUI
+            navi.log(string.format("[%s] %s", source, msg))
+        end
+    "#).exec()?;
+
+    // --- MESSAGING ---
+    let http_client = ctx.http.clone();
+    let say_fn = lua.create_function(move |_, (channel_id, text): (u64, String)| {
+        let http = http_client.clone();
+        tokio::spawn(async move {
+            let channel = serenity::ChannelId::new(channel_id);
+            if let Err(e) = channel.say(&http, text).await {
+                println!("Error sending message: {}", e);
+            }
+        });
+        Ok(())
+    })?;
+    navi.set("say", say_fn)?;
+
+    // Add Role
+    let http_add_role = ctx.http.clone();
+    navi.set("add_role", lua.create_function(move |_, (guild_id, user_id, role_id): (String, String, String)| {
+        let http = http_add_role.clone();
+        tokio::spawn(async move {
+            let g_id = serenity::GuildId::new(guild_id.parse().unwrap_or(0));
+            let u_id = serenity::UserId::new(user_id.parse().unwrap_or(0));
+            let r_id = serenity::RoleId::new(role_id.parse().unwrap_or(0));
+            
+            if let Err(e) = http.add_member_role(g_id, u_id, r_id, None).await {
+                println!("Failed to add role: {}", e);
+            }
+        });
+        Ok(())
+    })?)?;
+
+    // Remove Role
+    let http_remove_role = ctx.http.clone();
+    navi.set("remove_role", lua.create_function(move |_, (guild_id, user_id, role_id): (String, String, String)| {
+        let http = http_remove_role.clone();
+        tokio::spawn(async move {
+            let g_id = serenity::GuildId::new(guild_id.parse().unwrap_or(0));
+            let u_id = serenity::UserId::new(user_id.parse().unwrap_or(0));
+            let r_id = serenity::RoleId::new(role_id.parse().unwrap_or(0));
+
+            if let Err(e) = http.remove_member_role(g_id, u_id, r_id, None).await {
+                println!("Failed to remove role: {}", e);
+            }
+        });
+        Ok(())
+    })?)?;
+
+    // React to Message
+    let http_react = ctx.http.clone();
+    navi.set("react", lua.create_function(move |_, (channel_id, message_id, emoji): (String, String, String)| {
+        let http = http_react.clone();
+        tokio::spawn(async move {
+            let c_id = serenity::ChannelId::new(channel_id.parse().unwrap_or(0));
+            let m_id = serenity::MessageId::new(message_id.parse().unwrap_or(0));
+            let reaction_type = serenity::ReactionType::try_from(emoji.as_str()).unwrap_or(serenity::ReactionType::Unicode(emoji));
+
+            if let Err(e) = c_id.create_reaction(&http, m_id, reaction_type).await {
+                println!("Failed to react: {}", e);
+            }
+        });
+        Ok(())
+    })?)?;
+
+    // --- DB API ---
+    let db_table = lua.create_table()?;
+    let db_conn_set = db.clone();
+    db_table.set(
+        "set",
+        lua.create_function(move |_, (key, value): (String, String)| {
+            let conn = db_conn_set.lock().unwrap();
+            conn.execute(
+                "INSERT OR REPLACE INTO kv_store (key, value) VALUES (?1, ?2)",
+                (key, value),
+            )
+            .map_err(mlua::Error::external)?;
+            Ok(())
+        })?,
+    )?;
+
+    let db_conn_get = db.clone();
+    db_table.set(
+        "get",
+        lua.create_function(move |lua, key: String| {
+            let conn = db_conn_get.lock().unwrap();
+            let mut stmt = conn
+                .prepare("SELECT value FROM kv_store WHERE key = ?1")
+                .map_err(mlua::Error::external)?;
+            let result: Option<String> = stmt
+                .query_row([key], |row| row.get(0))
+                .optional()
+                .map_err(mlua::Error::external)?;
+
+            match result {
+                Some(val) => Ok(mlua::Value::String(lua.create_string(&val)?)),
+                None => Ok(mlua::Value::Nil),
+            }
+        })?,
+    )?;
+    navi.set("db", db_table)?;
+
+    // --- REGISTRIES (This is what you were missing!) ---
+    
+    // A. Listeners (for dispatcher)
+    let listeners = lua.create_table()?;
+    navi.set("listeners", listeners)?;
+    
+    navi.set(
+        "register",
+        lua.create_function(|lua, func: Function| {
+            let navi: LuaTable = lua.globals().get("navi")?;
+            let listeners: LuaTable = navi.get("listeners")?;
+            listeners.set(listeners.len()? + 1, func)?;
+            Ok(())
+        })?,
+    )?;
+
+    // B. Text Commands (for dispatcher)
+    let commands = lua.create_table()?;
+    navi.set("commands", commands)?;
+
+    navi.set(
+        "create_command",
+        lua.create_function(|lua, (name, func): (String, Function)| {
+            let navi: LuaTable = lua.globals().get("navi")?;
+            let commands: LuaTable = navi.get("commands")?;
+            commands.set(name, func)?;
+            Ok(())
+        })?,
+    )?;
+
+    // C. Slash Commands
+    let slash_cmds = lua.create_table()?;
+    navi.set("slash_commands", slash_cmds)?;
+
+    navi.set(
+        "create_slash",
+        lua.create_function(
+            |lua, (name, desc, options, func): (String, String, LuaValue, Function)| {
+                let navi: LuaTable = lua.globals().get("navi")?;
+                let slash_cmds: LuaTable = navi.get("slash_commands")?;
+
+                let cmd_data = lua.create_table()?;
+                cmd_data.set("description", desc)?;
+                cmd_data.set("options", options)?;
+                cmd_data.set("callback", func)?;
+
+                slash_cmds.set(name, cmd_data)?;
+                Ok(())
+            },
+        )?,
+    )?;
+
+    // 3. FINISH SETUP
     lua.globals().set("navi", navi)?;
-    lua.load(r#"function on_message(msg) if navi.listeners then for i, l in ipairs(navi.listeners) do pcall(l, msg) end end end"#).exec()?;
-    // === END OF BOILERPLATE ===
 
+    // 4. LOAD CONDUCTOR (The generic handler that calls listeners)
+    lua.load(
+        r#"
+        function on_message(msg)
+            if navi.listeners then
+                for i, listener in ipairs(navi.listeners) do
+                    pcall(listener, msg)
+                end
+            end
+        end
+    "#,
+    )
+    .exec()?;
 
-    // --- NEW: Auto-Load Plugins ---
+    // 5. LOAD PLUGINS
     let load_report = load_plugins(&lua);
-    println!("{}", load_report);
     let _ = tui_tx.send(BotEvent::Log(load_report));
 
     Ok(Data {

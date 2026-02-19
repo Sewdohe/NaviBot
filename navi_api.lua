@@ -1,7 +1,10 @@
 ---@meta
 
---- The global Navi namespace
+-- GLOBAL NAMESPACE
 navi = {}
+navi.db = {}
+
+-- TYPES
 
 ---@class EmbedField
 ---@field name string The field title
@@ -11,8 +14,9 @@ navi = {}
 ---@class Component
 ---@field type "button"
 ---@field label string Text on the button
----@field id string Custom ID sent back to the bot
----@field style "primary"|"secondary"|"success"|"danger"
+---@field id string? Custom ID (Required for normal buttons)
+---@field url string? URL (Required for 'link' style buttons)
+---@field style "primary"|"secondary"|"success"|"danger"|"link"
 
 ---@class MessageData
 ---@field title string?
@@ -20,6 +24,18 @@ navi = {}
 ---@field color integer? Hex color (0xFF0000)
 ---@field fields EmbedField[]?
 ---@field components Component[]?
+
+---@alias ReplyFn fun(message: string, ephemeral: boolean)
+
+---@class ComponentContext
+---@field custom_id string The ID of the clicked button
+---@field user_id string Who clicked it
+---@field channel_id string Where they clicked it
+---@field guild_id string? The server ID (nil if DM)
+---@field values string[]? Selected values (for dropdowns)
+---@field reply fun(message: string, ephemeral: boolean) Send a response
+
+-- FUNCTIONS
 
 --- Send a message with optional embed and buttons
 ---@param channel_id string
@@ -43,9 +59,6 @@ function navi.add_role(guild_id, user_id, role_id) end
 ---@param role_id string
 function navi.remove_role(guild_id, user_id, role_id) end
 
---- Database Access
-navi.db = {}
-
 --- Get a value from the KV store
 ---@param key string
 ---@return string?
@@ -66,3 +79,8 @@ function navi.register(callback) end
 ---@param options table[] Arguments
 ---@param callback fun(ctx: SlashContext)
 function navi.create_slash(name, desc, options, callback) end
+
+--- (Global Callback) Handle button/dropdown interactions
+--- Define this in your plugin to catch clicks!
+---@param ctx ComponentContext
+function on_component(ctx) end

@@ -33,6 +33,7 @@ end)
 
 -- 2. Handle Clicks
 -- The engine calls this global function when a button is clicked
+---@param ctx ComponentContext
 function on_component(ctx)
     local role_data = button_roles[ctx.custom_id]
     

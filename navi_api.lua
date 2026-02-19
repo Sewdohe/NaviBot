@@ -1,79 +1,68 @@
 ---@meta
 
----Registers a function to run whenever a message is received
----@param callback fun(msg: Message) The function to run
-function navi.register(callback) end
-
----Registers a new command with the bot
----@param name string The command name (without prefix, e.g. "ping")
----@param callback fun(msg: Message, args: string[]) The function to run
-function navi.create_command(name, callback) end
-
----@class Message
----@field content string The text content
----@field message_id string|number The unique ID of this message
----@field channel_id string|number The Channel ID
----@field author string The username (e.g. "Sewdohe")
----@field author_id string|number The user's unique ID
----@field author_avatar string URL to the user's profile picture
----@field attachments string[] List of URLs for any uploaded images/files
----@field mentions User[] A list of users tagged in the message
-
----@class User
----@field name string
----@field id string|number
----@field avatar string URL to avatar
-
----@class Navi
+--- The global Navi namespace
 navi = {}
 
----Sends a message to a specific Discord channel.
----@param channel_id string|number The Channel ID
----@param text string The message to send
-function navi.say(channel_id, text) end
-
----@type Navi
-_G.navi = navi
-
 ---@class EmbedField
----@field name string The title of the field
----@field value string The content of the field
----@field inline? boolean Whether fields sit side-by-side (default: false)
+---@field name string The field title
+---@field value string The field text
+---@field inline boolean? Whether it sits inline
 
----@class EmbedFooter
----@field text string The footer text
----@field icon_url? string Small icon next to footer text
+---@class Component
+---@field type "button"
+---@field label string Text on the button
+---@field id string Custom ID sent back to the bot
+---@field style "primary"|"secondary"|"success"|"danger"
 
----@class Embed
----@field title? string Big bold title
----@field description? string Main body text
----@field color? integer Hex color (e.g. 0xFF0000 for red)
----@field url? string Clicking the title links here
----@field image? string URL of big image at bottom
----@field thumbnail? string URL of small image at top-right
----@field footer? EmbedFooter
----@field fields? EmbedField[] List of fields
+---@class MessageData
+---@field title string?
+---@field description string?
+---@field color integer? Hex color (0xFF0000)
+---@field fields EmbedField[]?
+---@field components Component[]?
 
----Sends a rich embed card to a channel
----@param channel_id string|number
----@param embed Embed
-function navi.send_embed(channel_id, embed) end
+--- Send a message with optional embed and buttons
+---@param channel_id string
+---@param data MessageData
+function navi.send_message(channel_id, data) end
 
----Registers a new Slash Command (e.g. /ping)
----@param name string The command name (lowercase, no spaces)
----@param description string The help text shown in Discord
----@param options SlashOption[]|nil A list of arguments (pass {} if none)
----@param callback fun(ctx: SlashContext) The function to run
-function navi.create_slash(name, description, options, callback) end
+--- Send a plain text message
+---@param channel_id string
+---@param content string
+function navi.say(channel_id, content) end
 
----@class SlashOption
----@field name string The argument name (e.g. "amount")
----@field description string Help text for this argument
----@field type "string"|"integer"|"boolean"|"user"|"channel"|"role"|"number" The type of input
----@field required? boolean Is this argument mandatory? (Default: false)
+--- Add a role to a user
+---@param guild_id string
+---@param user_id string
+---@param role_id string
+function navi.add_role(guild_id, user_id, role_id) end
 
----@class SlashContext
----@field user_id string The ID of the user who ran the command
----@field username string The username of the command runner
----@field args table<string, string|number|boolean> Key-Value table of arguments. IDs are strings; Ints/Bools are native.
----@field reply fun(message: string) Sends a response message to the channel
+--- Remove a role from a user
+---@param guild_id string
+---@param user_id string
+---@param role_id string
+function navi.remove_role(guild_id, user_id, role_id) end
+
+--- Database Access
+navi.db = {}
+
+--- Get a value from the KV store
+---@param key string
+---@return string?
+function navi.db.get(key) end
+
+--- Set a value in the KV store
+---@param key string
+---@param value string
+function navi.db.set(key, value) end
+
+--- Register a chat listener
+---@param callback fun(msg: Message)
+function navi.register(callback) end
+
+--- Create a Slash Command
+---@param name string Command name
+---@param desc string Description
+---@param options table[] Arguments
+---@param callback fun(ctx: SlashContext)
+function navi.create_slash(name, desc, options, callback) end

@@ -217,5 +217,60 @@ pub async fn event_handler(
         }
     }
 
+    // 5. COMPONENT INTERACTION (Buttons/Select Menus)
+    if let serenity::FullEvent::InteractionCreate { interaction } = event {
+        if let serenity::Interaction::Component(comp) = interaction {
+            let user_id = comp.user.id.get().to_string();
+            let custom_id = comp.data.custom_id.clone();
+            let channel_id = comp.channel_id.get().to_string();
+
+            // Extract values (for Select Menus)
+            let values: Vec<String> = match &comp.data.kind {
+                serenity::ComponentInteractionDataKind::StringSelect { values } => values.clone(),
+                _ => Vec::new(),
+            };
+
+            { // Scope for Lua Lock
+                let ctx_lua = data.lua.lock().unwrap();
+                
+                // We look for a global function 'on_component'
+                if let Ok(callback) = ctx_lua.globals().get::<_, mlua::Function>("on_component") {
+                    if let Ok(table) = ctx_lua.create_table() {
+                        let _ = table.set("custom_id", custom_id);
+                        let _ = table.set("user_id", user_id);
+                        let _ = table.set("channel_id", channel_id);
+                        let _ = table.set("values", values);
+
+                        // Helper: Reply (Ephemeral or Public)
+                        let http = ctx.http.clone();
+                        let interaction_id = comp.id;
+                        let token = comp.token.clone();
+                        
+                        table.set("reply", ctx_lua.create_function(move |_, (msg, ephemeral): (String, bool)| {
+                            let h = http.clone();
+                            let t = token.clone();
+                            tokio::spawn(async move {
+                                let data = serenity::CreateInteractionResponseMessage::new()
+                                    .content(msg)
+                                    .ephemeral(ephemeral);
+                                let resp = serenity::CreateInteractionResponse::Message(data);
+                                
+                                if let Err(e) = h.create_interaction_response(interaction_id, &t, &resp, vec![]).await {
+                                    println!("Error replying to component: {}", e);
+                                }
+                            });
+                            Ok(())
+                        })?)?;
+
+                        // Fire the event
+                        if let Err(e) = callback.call::<_, ()>(table) {
+                            println!("❌ Lua Component Error: {}", e);
+                        }
+                    }
+                };
+            }
+        }
+    }
+
     Ok(())
 }

@@ -238,53 +238,95 @@ pub async fn init(
     })?)?;
 
 
-    // navi.send_embed(channel_id, { title="...", description="...", color=0xFF0000 })
-    let http_embed = ctx.http.clone();
-    navi.set("send_embed", lua.create_function(move |_, (channel_id, data): (String, LuaTable)| {
-        let http = http_embed.clone();
+    
+    // navi.send_message(channel_id, { title="...", components={...} })
+    // We are renaming this to 'send_message' to reflect it does more than just embeds now.
+    // (You can keep 'send_embed' as an alias if you want, or just update your plugins)
+    let http_msg = ctx.http.clone();
+    
+    // Helper to parse Hex Color
+    fn parse_color(c: Option<u32>) -> serenity::Color {
+        match c {
+            Some(val) => serenity::Color::new(val),
+            None => serenity::Color::new(0x000000),
+        }
+    }
+
+    navi.set("send_message", lua.create_function(move |_, (channel_id, data): (String, LuaTable)| {
+        let http = http_msg.clone();
         
-        // 1. Extract Basic Data
+        // 1. Parse Embed Fields
         let title: Option<String> = data.get("title").ok();
         let description: Option<String> = data.get("description").ok();
-        let image: Option<String> = data.get("image").ok();
-        let thumbnail: Option<String> = data.get("thumbnail").ok();
         let color: Option<u32> = data.get("color").ok();
-
-        // 2. Extract Fields (Critical Step!)
-        // We must convert LuaTable -> Rust Vec BEFORE the async block
         let mut fields = Vec::new();
         if let Ok(lua_fields) = data.get::<_, Vec<LuaTable>>("fields") {
             for f in lua_fields {
-                let name: String = f.get("name").unwrap_or_else(|_| "No Title".to_string());
-                let value: String = f.get("value").unwrap_or_else(|_| "No Value".to_string());
+                let name: String = f.get("name").unwrap_or_default();
+                let value: String = f.get("value").unwrap_or_default();
                 let inline: bool = f.get("inline").unwrap_or(false);
                 fields.push((name, value, inline));
             }
         }
-        
-        tokio::spawn(async move {
-            let mut embed = serenity::CreateEmbed::new();
-            
-            if let Some(t) = title { embed = embed.title(t); }
-            if let Some(d) = description { embed = embed.description(d); }
-            if let Some(i) = image { embed = embed.image(i); }
-            if let Some(thumb) = thumbnail { embed = embed.thumbnail(thumb); }
-            if let Some(c) = color { embed = embed.color(serenity::Color::new(c)); }
 
-            // 3. Attach Fields
-            for (name, value, inline) in fields {
-                embed = embed.field(name, value, inline);
+        // 2. Parse Components (Action Rows)
+        let mut row_buttons = Vec::new();
+        if let Ok(comps) = data.get::<_, Vec<LuaTable>>("components") {
+            for c in comps {
+                let c_type: String = c.get("type").unwrap_or("button".into());
+                
+                if c_type == "button" {
+                    let label: String = c.get("label").unwrap_or("Button".into());
+                    let style_str: String = c.get("style").unwrap_or("primary".into());
+                    
+                    // HANDLE LINK BUTTONS SEPARATELY
+                    if style_str == "link" || style_str == "url" {
+                        let url: String = c.get("url").unwrap_or("https://discord.com".into());
+                        row_buttons.push(serenity::CreateButton::new_link(url).label(label));
+                    } else {
+                        // HANDLE REGULAR BUTTONS
+                        let custom_id: String = c.get("id").unwrap_or("unknown".into());
+                        
+                        let style = match style_str.as_str() {
+                            "secondary" | "gray" => serenity::ButtonStyle::Secondary,
+                            "success" | "green" => serenity::ButtonStyle::Success,
+                            "danger" | "red" => serenity::ButtonStyle::Danger,
+                            _ => serenity::ButtonStyle::Primary, // Blue
+                        };
+                        
+                        row_buttons.push(serenity::CreateButton::new(custom_id).style(style).label(label));
+                    }
+                }
+            }
+        }
+
+        tokio::spawn(async move {
+            let mut msg = serenity::CreateMessage::new();
+
+            // Attach Embed
+            if title.is_some() || description.is_some() {
+                let mut embed = serenity::CreateEmbed::new();
+                if let Some(t) = title { embed = embed.title(t); }
+                if let Some(d) = description { embed = embed.description(d); }
+                embed = embed.color(parse_color(color));
+                for (n, v, i) in fields { embed = embed.field(n, v, i); }
+                msg = msg.embed(embed);
+            }
+
+            // Attach Components
+            if !row_buttons.is_empty() {
+                let row = serenity::CreateActionRow::Buttons(row_buttons);
+                msg = msg.components(vec![row]);
             }
 
             let c_id = serenity::ChannelId::new(channel_id.parse().unwrap_or(0));
-            let msg = serenity::CreateMessage::new().embed(embed);
-            
             if let Err(e) = c_id.send_message(&http, msg).await {
-                println!("Error sending embed: {}", e);
+                println!("Error sending message: {}", e);
             }
         });
         Ok(())
     })?)?;
+
 
     // --- DB API ---
     let db_table = lua.create_table()?;

@@ -237,6 +237,55 @@ pub async fn init(
         Ok(())
     })?)?;
 
+
+    // navi.send_embed(channel_id, { title="...", description="...", color=0xFF0000 })
+    let http_embed = ctx.http.clone();
+    navi.set("send_embed", lua.create_function(move |_, (channel_id, data): (String, LuaTable)| {
+        let http = http_embed.clone();
+        
+        // 1. Extract Basic Data
+        let title: Option<String> = data.get("title").ok();
+        let description: Option<String> = data.get("description").ok();
+        let image: Option<String> = data.get("image").ok();
+        let thumbnail: Option<String> = data.get("thumbnail").ok();
+        let color: Option<u32> = data.get("color").ok();
+
+        // 2. Extract Fields (Critical Step!)
+        // We must convert LuaTable -> Rust Vec BEFORE the async block
+        let mut fields = Vec::new();
+        if let Ok(lua_fields) = data.get::<_, Vec<LuaTable>>("fields") {
+            for f in lua_fields {
+                let name: String = f.get("name").unwrap_or_else(|_| "No Title".to_string());
+                let value: String = f.get("value").unwrap_or_else(|_| "No Value".to_string());
+                let inline: bool = f.get("inline").unwrap_or(false);
+                fields.push((name, value, inline));
+            }
+        }
+        
+        tokio::spawn(async move {
+            let mut embed = serenity::CreateEmbed::new();
+            
+            if let Some(t) = title { embed = embed.title(t); }
+            if let Some(d) = description { embed = embed.description(d); }
+            if let Some(i) = image { embed = embed.image(i); }
+            if let Some(thumb) = thumbnail { embed = embed.thumbnail(thumb); }
+            if let Some(c) = color { embed = embed.color(serenity::Color::new(c)); }
+
+            // 3. Attach Fields
+            for (name, value, inline) in fields {
+                embed = embed.field(name, value, inline);
+            }
+
+            let c_id = serenity::ChannelId::new(channel_id.parse().unwrap_or(0));
+            let msg = serenity::CreateMessage::new().embed(embed);
+            
+            if let Err(e) = c_id.send_message(&http, msg).await {
+                println!("Error sending embed: {}", e);
+            }
+        });
+        Ok(())
+    })?)?;
+
     // --- DB API ---
     let db_table = lua.create_table()?;
     let db_conn_set = db.clone();

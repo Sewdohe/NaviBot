@@ -5,30 +5,28 @@ mod tui;
 mod types;
 
 use dotenvy::dotenv;
+use mlua::Lua;
 use poise::serenity_prelude as serenity;
+use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
-use types::{AdminCommand, BotEvent}; // Import the new types
+use types::{AdminCommand, BotEvent};
 
-// We REMOVE #[tokio::main] because we are managing threads manually now!
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenv().ok();
 
-    // 1. Create Channels (The "Phone Lines")
+    // 1. CHANNELS
+    // TUI <-> Bot communication
     let (tx_to_tui, rx_from_tui) = mpsc::unbounded_channel::<BotEvent>();
     let (tx_to_bot, mut rx_from_tui_cmd) = mpsc::unbounded_channel::<AdminCommand>();
 
-    // 2. Spawn Bot Thread
+    // SMUGGLE CHANNEL: Passes the Lua instance from the async bot to the sync admin loop
+    let (init_tx, mut init_rx) = mpsc::unbounded_channel::<Arc<Mutex<Lua>>>();
+
+    // 2. SPAWN BOT THREAD
     std::thread::spawn(move || {
-        // Start the Tokio Runtime
         let rt = tokio::runtime::Runtime::new().unwrap();
 
-        // --- CLONING STATION ---
-        // We need separate copies of the "Phone" for different parts of the code.
-
-        // Copy 1: Goes into the Framework Setup (consumed by the move)
         let tx_for_setup = tx_to_tui.clone();
-
-        // Copy 2: Stays here for the Admin Loop
         let tx_for_loop = tx_to_tui.clone();
 
         rt.block_on(async move {
@@ -36,7 +34,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let intents = serenity::GatewayIntents::non_privileged()
                 | serenity::GatewayIntents::MESSAGE_CONTENT;
 
-            // Define Framework
             let framework = poise::Framework::builder()
                 .options(poise::FrameworkOptions {
                     commands: vec![commands::reload(), commands::sync()],
@@ -55,28 +52,46 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             .await?;
 
                         let tx_for_engine = tx_for_setup.clone();
-                        let data = engine::init(ctx, tx_for_engine).await?;
 
-                        // 1. Get commands (Force drop lock immediately)
-                        let commands = {
-                            let lua = data.lua.lock().unwrap();
-                            engine::read_slash_commands(&lua)?
-                        };
-                        // <--- The Lock is 100% dead here
+                        // Error Handling Wrapper
+                        let data_result = engine::init(ctx, tx_for_engine.clone()).await;
 
-                        // 2. Upload
-                        let sync_report =
-                            engine::upload_slash_commands(&ctx.http, commands).await?;
+                        match data_result {
+                            Ok(data) => {
+                                // --- FIX: SCOPED LOCK FOR SYNC ---
+                                // 1. Read commands (Lock Lua, Read, Drop Lock)
+                                let commands_result = {
+                                    let lua = data.lua.lock().unwrap();
+                                    engine::read_slash_commands(&lua)
+                                }; // <--- Lock is dropped here
 
-                        let _ = tx_for_setup.send(BotEvent::Log(sync_report));
-                        let _ = tx_for_setup.send(BotEvent::Log("✅ Bot is Online!".into()));
+                                // 2. Upload commands (Async, no lock held)
+                                let sync_report = match commands_result {
+                                    Ok(cmds) => engine::upload_slash_commands(&ctx.http, cmds)
+                                        .await
+                                        .unwrap_or_else(|e| format!("Sync failed: {}", e)),
+                                    Err(e) => format!("Lua Read Error: {}", e),
+                                };
 
-                        Ok(data)
+                                let _ = tx_for_setup.send(BotEvent::Log(sync_report));
+                                let _ =
+                                    tx_for_setup.send(BotEvent::Log("✅ Bot is Online!".into()));
+
+                                // Send the Lua instance to the Admin Loop
+                                let _ = init_tx.send(data.lua.clone());
+
+                                Ok(data)
+                            }
+                            Err(e) => {
+                                let _ = tx_for_setup
+                                    .send(BotEvent::Log(format!("🔥 CRITICAL ERROR: {}", e)));
+                                Err(e)
+                            }
+                        }
                     })
                 })
                 .build();
 
-            // FIX #1: Added 'mut' here
             let mut client = serenity::ClientBuilder::new(token, intents)
                 .framework(framework)
                 .await
@@ -84,35 +99,42 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             let shard_manager = client.shard_manager.clone();
 
-            // Spawn the Client (Bot)
             tokio::spawn(async move {
                 if let Err(why) = client.start().await {
                     println!("Client error: {:?}", why);
                 }
             });
 
-            // 3. Listen for Admin Commands (from TUI)
-            // FIX #2: We use 'tx_for_loop' here, which was NOT moved into the framework
-            while let Some(cmd) = rx_from_tui_cmd.recv().await {
-                match cmd {
-                    AdminCommand::Shutdown => {
-                        let _ = tx_for_loop.send(BotEvent::Log("🔴 Shutting down...".into()));
-                        shard_manager.shutdown_all().await;
-                        break;
+            // 3. ADMIN LOOP
+            // Wait for Lua to arrive before processing commands
+            if let Some(lua_instance) = init_rx.recv().await {
+                while let Some(cmd) = rx_from_tui_cmd.recv().await {
+                    match cmd {
+                        AdminCommand::Shutdown => {
+                            let _ = tx_for_loop.send(BotEvent::Log("🔴 Shutting down...".into()));
+                            shard_manager.shutdown_all().await;
+                            break;
+                        }
+                        AdminCommand::Reload => {
+                            let report = {
+                                let lua = lua_instance.lock().unwrap();
+                                engine::load_plugins(&lua)
+                            };
+                            let _ = tx_for_loop.send(BotEvent::Log(report));
+                        }
+                        _ => {}
                     }
-                    AdminCommand::Reload => {
-                        let _ = tx_for_loop.send(BotEvent::Log(
-                            "🔄 Reload triggered via TUI (Not implemented yet)".into(),
-                        ));
-                    }
-                    _ => {}
                 }
+            } else {
+                let _ = tx_for_loop.send(BotEvent::Log(
+                    "⚠️ Admin loop failed to capture Lua instance.".into(),
+                ));
             }
         });
     });
 
-    // 3. Start TUI (Main Thread)
-    // This blocks until the user presses 'q'
+    // 4. RUN TUI (Main Thread)
+    // This must be OUTSIDE the spawn block
     tui::run(tx_to_bot, rx_from_tui)?;
 
     Ok(())

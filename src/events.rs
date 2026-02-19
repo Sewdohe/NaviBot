@@ -65,6 +65,8 @@ pub async fn event_handler(
             let cmd_name = command.data.name.clone();
             let user_id = command.user.id.get();
             let username = command.user.name.clone();
+            let channel_id = command.channel_id.get().to_string();
+            let guild_id = command.guild_id.map(|g| g.get().to_string());
 
             // --- STEP A: PREPARE DATA ---
 
@@ -123,6 +125,8 @@ pub async fn event_handler(
                     if let Ok(ctx_table) = lua.create_table() {
                         let _ = ctx_table.set("user_id", user_id);
                         let _ = ctx_table.set("username", username);
+                        let _ = ctx_table.set("channel_id", channel_id);
+                        let _ = ctx_table.set("guild_id", guild_id);
 
                         // 3. INJECT ARGUMENTS WITH TYPES
                         let args_table = lua.create_table()?;

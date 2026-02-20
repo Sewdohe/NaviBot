@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex};
+use std::{collections::HashMap, sync::{Arc, Mutex}};
 use mlua::Lua;
 use rusqlite::Connection;
 use serde::Deserialize;
@@ -36,29 +36,30 @@ pub struct Data {
     pub tui_tx: UnboundedSender<BotEvent>,
 }
 
-// 2. Embed Structs (Needed for send_embed)
-// We make fields 'pub' so other modules can read them.
-#[derive(Debug, Deserialize)]
-pub struct LuaEmbedField {
-    pub name: String,
-    pub value: String,
-    pub inline: Option<bool>,
+// Configuration Types
+#[derive(Clone, Debug, PartialEq)]
+pub enum ConfigType {
+    String,
+    Number,
+    Boolean,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct LuaEmbedFooter {
-    pub text: String,
-    pub icon_url: Option<String>,
+// A single setting for a plugin
+#[derive(Clone, Debug)]
+pub struct ConfigField {
+    pub key: String,            // e.g., "channel_id"
+    pub name: String,           // e.g., "Welcome Channel"
+    pub description: String,    // e.g., "The ID of the channel to send welcome messages in"
+    pub field_type: ConfigType, // e.g., ConfigType::String
+    pub default_value: String,  // e.g., ""
 }
 
-#[derive(Debug, Deserialize)]
-pub struct LuaEmbed {
-    pub title: Option<String>,
-    pub description: Option<String>,
-    pub color: Option<u32>,
-    pub url: Option<String>,
-    pub image: Option<String>,
-    pub thumbnail: Option<String>,
-    pub footer: Option<LuaEmbedFooter>,
-    pub fields: Option<Vec<LuaEmbedField>>,
+// The full schema for a single plugin
+#[derive(Clone, Debug)]
+pub struct PluginSchema {
+    pub plugin_name: String,
+    pub fields: Vec<ConfigField>,
 }
+
+// The Shared Registry (Thread-safe map of all plugin schemas)
+pub type ConfigRegistry = Arc<Mutex<HashMap<String, PluginSchema>>>;

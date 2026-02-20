@@ -1,4 +1,4 @@
-use crate::types::{BotEvent, Data, Error, LuaEmbed};
+use crate::types::{BotEvent, Data, Error};
 use mlua::prelude::*;
 use mlua::Function;
 use mlua::{StdLib, LuaOptions};
@@ -8,6 +8,7 @@ use serenity::{CreateCommand, CreateCommandOption};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc::UnboundedSender;
+use crate::types::{ConfigRegistry, ConfigField, ConfigType, PluginSchema};
 
 // --- HELPER: Load Plugins ---
 pub fn load_plugins(lua: &Lua) -> String {
@@ -121,6 +122,7 @@ pub async fn upload_slash_commands(
 pub async fn init(
     ctx: &serenity::Context,
     tui_tx: UnboundedSender<BotEvent>,
+    config_registry: ConfigRegistry,
 ) -> Result<Data, Error> {
     let _ = tui_tx.send(BotEvent::Log("--- Engine Initialization ---".into()));
 
@@ -128,6 +130,8 @@ pub async fn init(
     let lua = unsafe { 
         Lua::unsafe_new_with(libs, LuaOptions::default())
     };
+
+    
 
     // 1. DATABASE
     let conn = Connection::open("navi.db").expect("Failed to open DB");
@@ -270,7 +274,9 @@ pub async fn init(
         }
 
         // 2. Parse Components (Action Rows)
-        let mut row_buttons = Vec::new();
+        let mut action_rows = Vec::new();
+        let mut current_buttons = Vec::new();
+
         if let Ok(comps) = data.get::<_, Vec<LuaTable>>("components") {
             for c in comps {
                 let c_type: String = c.get("type").unwrap_or("button".into());
@@ -279,25 +285,60 @@ pub async fn init(
                     let label: String = c.get("label").unwrap_or("Button".into());
                     let style_str: String = c.get("style").unwrap_or("primary".into());
                     
-                    // HANDLE LINK BUTTONS SEPARATELY
                     if style_str == "link" || style_str == "url" {
                         let url: String = c.get("url").unwrap_or("https://discord.com".into());
-                        row_buttons.push(serenity::CreateButton::new_link(url).label(label));
+                        current_buttons.push(serenity::CreateButton::new_link(url).label(label));
                     } else {
-                        // HANDLE REGULAR BUTTONS
                         let custom_id: String = c.get("id").unwrap_or("unknown".into());
-                        
                         let style = match style_str.as_str() {
                             "secondary" | "gray" => serenity::ButtonStyle::Secondary,
                             "success" | "green" => serenity::ButtonStyle::Success,
                             "danger" | "red" => serenity::ButtonStyle::Danger,
-                            _ => serenity::ButtonStyle::Primary, // Blue
+                            _ => serenity::ButtonStyle::Primary,
                         };
-                        
-                        row_buttons.push(serenity::CreateButton::new(custom_id).style(style).label(label));
+                        current_buttons.push(serenity::CreateButton::new(custom_id).style(style).label(label));
                     }
+                } 
+                else if c_type == "select" {
+                    // Discord requires Select Menus to be on their own row!
+                    // If we have pending buttons, flush them to a row first.
+                    if !current_buttons.is_empty() {
+                        action_rows.push(serenity::CreateActionRow::Buttons(current_buttons.clone()));
+                        current_buttons.clear(); // Reset for the next batch
+                    }
+                    
+                    let custom_id: String = c.get("id").unwrap_or("select_menu".into());
+                    let placeholder: String = c.get("placeholder").unwrap_or("Select an option...".into());
+                    
+                    let mut options = Vec::new();
+                    if let Ok(lua_opts) = c.get::<_, Vec<LuaTable>>("options") {
+                        for opt in lua_opts {
+                            let label: String = opt.get("label").unwrap_or("Option".into());
+                            let value: String = opt.get("value").unwrap_or(label.clone());
+                            let desc: Option<String> = opt.get("description").ok();
+                            let emoji: Option<String> = opt.get("emoji").ok();
+                            
+                            let mut builder = serenity::CreateSelectMenuOption::new(label, value);
+                            if let Some(d) = desc { builder = builder.description(d); }
+                            if let Some(e) = emoji { builder = builder.emoji(serenity::ReactionType::Unicode(e)); }
+                            
+                            options.push(builder);
+                        }
+                    }
+
+                    let menu = serenity::CreateSelectMenu::new(
+                        custom_id, 
+                        serenity::CreateSelectMenuKind::String { options }
+                    ).placeholder(placeholder);
+                    
+                    action_rows.push(serenity::CreateActionRow::SelectMenu(menu));
                 }
             }
+        }
+
+        // Flush any remaining buttons at the very end
+        if !current_buttons.is_empty() {
+            action_rows.push(serenity::CreateActionRow::Buttons(current_buttons));
         }
 
         tokio::spawn(async move {
@@ -313,10 +354,9 @@ pub async fn init(
                 msg = msg.embed(embed);
             }
 
-            // Attach Components
-            if !row_buttons.is_empty() {
-                let row = serenity::CreateActionRow::Buttons(row_buttons);
-                msg = msg.components(vec![row]);
+            // Attach the completely formatted Action Rows
+            if !action_rows.is_empty() {
+                msg = msg.components(action_rows);
             }
 
             let c_id = serenity::ChannelId::new(channel_id.parse().unwrap_or(0));
@@ -324,6 +364,73 @@ pub async fn init(
                 println!("Error sending message: {}", e);
             }
         });
+        Ok(())
+    })?)?;
+
+    // Config registry
+    let registry_for_lua = config_registry.clone();
+
+    navi.set("register_config", lua.create_function(move |_, (plugin_name, schema): (String, mlua::Table)| {
+        let mut fields = Vec::new();
+
+        // Iterate over the Lua array of tables
+        // Example: { { key = "channel_id", type = "string" }, ... }
+        for pair in schema.pairs::<mlua::Integer, mlua::Table>() {
+            let (_, field_table) = pair?;
+            
+            let key: String = field_table.get("key")?;
+            let name: String = field_table.get("name").unwrap_or_else(|_| key.clone());
+            let description: String = field_table.get("description").unwrap_or_default();
+            let type_str: String = field_table.get("type").unwrap_or_else(|_| "string".to_string());
+            
+            // Smart coercion: Convert whatever they typed as 'default' into a String
+            let default_value: String = match field_table.get::<_, mlua::Value>("default") {
+                Ok(mlua::Value::String(s)) => s.to_str()?.to_string(),
+                Ok(mlua::Value::Integer(i)) => i.to_string(),
+                Ok(mlua::Value::Number(n)) => n.to_string(),
+                Ok(mlua::Value::Boolean(b)) => b.to_string(),
+                _ => "".to_string(),
+            };
+
+            let field_type = match type_str.as_str() {
+                "number" => ConfigType::Number,
+                "boolean" => ConfigType::Boolean,
+                _ => ConfigType::String,
+            };
+
+            fields.push(ConfigField {
+                key: key.clone(),
+                name,
+                description,
+                field_type,
+                default_value: default_value.clone(),
+            });
+
+            // --- DATABASE DEFAULT INJECTION (Optional but recommended) ---
+            // If you want the bot to automatically populate the database with defaults 
+            // so they aren't 'nil' the first time the plugin runs, do it here!
+            /*
+            let db_key = format!("config:{}:{}", plugin_name, key);
+            // Pseudo-code assuming your DB implementation:
+            if db_for_config.get(&db_key).is_none() {
+                db_for_config.set(&db_key, &default_value);
+            }
+            */
+        }
+
+        let plugin_schema = PluginSchema {
+            plugin_name: plugin_name.clone(),
+            fields,
+        };
+
+        // Lock the shared registry and save the schema so the TUI can read it
+        {
+            let mut registry = registry_for_lua.lock().unwrap();
+            registry.insert(plugin_name.clone(), plugin_schema);
+        }
+
+        println!("⚙️ Registered config schema for plugin: {}", plugin_name);
+
         Ok(())
     })?)?;
 

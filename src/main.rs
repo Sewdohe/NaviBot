@@ -7,7 +7,7 @@ mod types;
 use dotenvy::dotenv;
 use mlua::Lua;
 use poise::serenity_prelude as serenity;
-use std::sync::{Arc, Mutex};
+use std::{collections::HashMap, sync::{Arc, Mutex}};
 use tokio::sync::mpsc;
 use types::{AdminCommand, BotEvent};
 
@@ -21,6 +21,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // SMUGGLE CHANNEL: Passes the Lua instance from the async bot to the sync admin loop
     let (init_tx, mut init_rx) = mpsc::unbounded_channel::<Arc<Mutex<Lua>>>();
+
+    // [ADDITION 1] Create the Config Registry
+    let config_registry: types::ConfigRegistry = Arc::new(Mutex::new(HashMap::new()));
+    let registry_for_engine = config_registry.clone();
+    let registry_for_tui = config_registry.clone();
 
     // 2. SPAWN BOT THREAD
     std::thread::spawn(move || {
@@ -54,7 +59,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let tx_for_engine = tx_for_setup.clone();
 
                         // Error Handling Wrapper
-                        let data_result = engine::init(ctx, tx_for_engine.clone()).await;
+                        // let data_result = engine::init(ctx, tx_for_engine.clone()).await;
+                        let data_result = engine::init(ctx, tx_for_engine.clone(), registry_for_engine).await;
 
                         match data_result {
                             Ok(data) => {
@@ -135,7 +141,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 4. RUN TUI (Main Thread)
     // This must be OUTSIDE the spawn block
-    tui::run(tx_to_bot, rx_from_tui)?;
+    // tui::run(tx_to_bot, rx_from_tui)?;
+    tui::run(tx_to_bot, rx_from_tui, registry_for_tui)?;
+
 
     Ok(())
 }

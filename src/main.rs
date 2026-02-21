@@ -7,7 +7,10 @@ mod types;
 use dotenvy::dotenv;
 use mlua::Lua;
 use poise::serenity_prelude as serenity;
-use std::{collections::HashMap, sync::{Arc, Mutex}};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 use tokio::sync::mpsc;
 use types::{AdminCommand, BotEvent};
 
@@ -26,6 +29,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config_registry: types::ConfigRegistry = Arc::new(Mutex::new(HashMap::new()));
     let registry_for_engine = config_registry.clone();
     let registry_for_tui = config_registry.clone();
+    let registry_for_loop = config_registry.clone();
 
     // 2. SPAWN BOT THREAD
     std::thread::spawn(move || {
@@ -60,7 +64,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                         // Error Handling Wrapper
                         // let data_result = engine::init(ctx, tx_for_engine.clone()).await;
-                        let data_result = engine::init(ctx, tx_for_engine.clone(), registry_for_engine).await;
+                        let data_result =
+                            engine::init(ctx, tx_for_engine.clone(), registry_for_engine).await;
 
                         match data_result {
                             Ok(data) => {
@@ -128,7 +133,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             };
                             let _ = tx_for_loop.send(BotEvent::Log(report));
                         }
-                        _ => {}
+                        AdminCommand::SaveConfig { plugin, key, value } => {
+                            let db_key = format!("config:{}:{}", plugin, key);
+                            
+                            // 1. Chained one-liner to satisfy the borrow checker
+                            // This locks the Mutex, calls the Lua function, and drops the lock instantly.
+                            let _ = lua_instance.lock().unwrap().globals()
+                                .get::<_, mlua::Table>("navi")
+                                .and_then(|n| n.get::<_, mlua::Table>("db"))
+                                .and_then(|db| db.get::<_, mlua::Function>("set"))
+                                .and_then(|set_fn| set_fn.call::<_, ()>((db_key.clone(), value.clone())));
+                            
+                            // 2. Update the TUI visual registry
+                            let mut registry = registry_for_loop.lock().unwrap();
+                            if let Some(schema) = registry.get_mut(&plugin) {
+                                if let Some(field) = schema.fields.iter_mut().find(|f| f.key == key) {
+                                    field.default_value = value.clone();
+                                }
+                            }
+                            
+                            let _ = tx_for_loop.send(BotEvent::Log(format!("💾 Saved config: {} -> {}", db_key, value)));
+                        }
                     }
                 }
             } else {
@@ -143,7 +168,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // This must be OUTSIDE the spawn block
     // tui::run(tx_to_bot, rx_from_tui)?;
     tui::run(tx_to_bot, rx_from_tui, registry_for_tui)?;
-
 
     Ok(())
 }

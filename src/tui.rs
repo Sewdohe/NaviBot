@@ -21,6 +21,12 @@ enum AppMode {
     Config,
 }
 
+#[derive(PartialEq)]
+enum ConfigPane {
+    PluginList,
+    FieldList,
+}
+
 pub fn run(
     tx_to_bot: UnboundedSender<AdminCommand>,
     mut rx_from_bot: UnboundedReceiver<BotEvent>,
@@ -40,8 +46,18 @@ pub fn run(
     let mut input_buffer = String::new();
     
     // New State for Config Dashboard
+    let _mode = AppMode::Logs;
+    let _selected_plugin_index = 0;
+
+    // New State for Config Dashboard
     let mut mode = AppMode::Logs;
+    let mut config_pane = ConfigPane::PluginList; // Left or Right side
     let mut selected_plugin_index = 0;
+    let mut selected_field_index = 0;
+    
+    // Typing State
+    let mut is_editing = false;
+    let mut edit_buffer = String::new();
 
     // 3. MAIN LOOP
     loop {
@@ -58,7 +74,7 @@ pub fn run(
 
         // B. DRAW UI
         terminal.draw(|f| {
-            let size = f.size();
+            let size = f.area();
 
             if mode == AppMode::Logs {
                 // --- 1. LOGS VIEW (Original) ---
@@ -144,17 +160,41 @@ pub fn run(
                         Line::from(""),
                     ];
 
-                    for field in &schema.fields {
-                        text.push(Line::from(Span::styled(&field.name, Style::default().fg(Color::Yellow))));
+                    // Prevent field index out of bounds
+                    if selected_field_index >= schema.fields.len() {
+                        selected_field_index = schema.fields.len().saturating_sub(1);
+                    }
+
+                    for (i, field) in schema.fields.iter().enumerate() {
+                        // Highlight the name if this field is selected
+                        let name_style = if config_pane == ConfigPane::FieldList && i == selected_field_index {
+                            Style::default().fg(Color::Black).bg(Color::Yellow) // Highlighted
+                        } else {
+                            Style::default().fg(Color::Yellow) // Normal
+                        };
+                        
+                        text.push(Line::from(Span::styled(&field.name, name_style)));
                         text.push(Line::from(Span::styled(&field.description, Style::default().fg(Color::DarkGray))));
-                        text.push(Line::from(format!(" [ {} ]", field.default_value)));
+                        
+                        // Show the typing buffer if editing, otherwise show the current value
+                        if is_editing && i == selected_field_index {
+                            text.push(Line::from(Span::styled(
+                                format!(" [ {}_ ]", edit_buffer), 
+                                Style::default().fg(Color::White).bg(Color::DarkGray)
+                            )));
+                        } else {
+                            text.push(Line::from(format!(" [ {} ]", field.default_value)));
+                        }
+                        
                         text.push(Line::from("")); 
                     }
 
-                    text.push(Line::from(Span::styled("Press 'l' to return to logs.", Style::default().fg(Color::DarkGray))));
-
                     let right_pane = Paragraph::new(text)
-                        .block(Block::default().title("⚙️ Settings").borders(Borders::ALL));
+                        .block(Block::default()
+                            .title(if config_pane == ConfigPane::FieldList { "⚙️ Settings (Editing)" } else { "⚙️ Settings" })
+                            .borders(Borders::ALL)
+                            .border_style(if config_pane == ConfigPane::FieldList { Style::default().fg(Color::Green) } else { Style::default() })
+                        );
                     f.render_widget(right_pane, chunks[1]);
                 }
             }
@@ -177,30 +217,104 @@ pub fn run(
                     }
                 } else {
                     match key.code {
-                        KeyCode::Char('q') => {
+                        // --- GLOBAL HOTKEYS (Guarded) ---
+                        KeyCode::Char('q') if !is_editing => {
                             let _ = tx_to_bot.send(AdminCommand::Shutdown);
                             break; 
                         }
-                        KeyCode::Char('r') => {
+                        KeyCode::Char('r') if !is_editing => {
                             let _ = tx_to_bot.send(AdminCommand::Reload);
                         }
-                        // Toggle Modes
-                        KeyCode::Char('i') => {
+                        KeyCode::Char('i') if !is_editing => {
                             if mode == AppMode::Logs { input_mode = true; }
                         }
-                        KeyCode::Char('c') => mode = AppMode::Config,
-                        KeyCode::Char('l') => mode = AppMode::Logs,
+                        KeyCode::Char('c') if !is_editing => mode = AppMode::Config,
+                        KeyCode::Char('l') if !is_editing => mode = AppMode::Logs,
                         
-                        // Navigation in Config Mode
-                        KeyCode::Up if mode == AppMode::Config => {
+                        // --- CONFIG DASHBOARD NAVIGATION ---
+                        KeyCode::Right | KeyCode::Enter if mode == AppMode::Config && config_pane == ConfigPane::PluginList => {
+                            // Jump to the right pane
+                            config_pane = ConfigPane::FieldList;
+                            selected_field_index = 0;
+                        }
+                        KeyCode::Left | KeyCode::Esc if mode == AppMode::Config && config_pane == ConfigPane::FieldList && !is_editing => {
+                            // Jump back to the left pane
+                            config_pane = ConfigPane::PluginList;
+                        }
+                        
+                        // Navigating the Left Pane (Plugins)
+                        KeyCode::Up if mode == AppMode::Config && config_pane == ConfigPane::PluginList => {
                             selected_plugin_index = selected_plugin_index.saturating_sub(1);
                         }
-                        KeyCode::Down if mode == AppMode::Config => {
+                        KeyCode::Down if mode == AppMode::Config && config_pane == ConfigPane::PluginList => {
                             let max = config_registry.lock().unwrap().len().saturating_sub(1);
-                            if selected_plugin_index < max {
-                                selected_plugin_index += 1;
+                            if selected_plugin_index < max { selected_plugin_index += 1; }
+                        }
+
+                        // Navigating the Right Pane (Fields)
+                        KeyCode::Up if mode == AppMode::Config && config_pane == ConfigPane::FieldList && !is_editing => {
+                            selected_field_index = selected_field_index.saturating_sub(1);
+                        }
+                        KeyCode::Down if mode == AppMode::Config && config_pane == ConfigPane::FieldList && !is_editing => {
+                            let registry = config_registry.lock().unwrap();
+                            let mut names: Vec<String> = registry.keys().cloned().collect();
+                            names.sort();
+                            
+                            if let Some(name) = names.get(selected_plugin_index) {
+                                if let Some(schema) = registry.get(name) {
+                                    let max = schema.fields.len().saturating_sub(1);
+                                    if selected_field_index < max { selected_field_index += 1; }
+                                }
                             }
                         }
+
+                        // --- EDITING A FIELD ---
+                        KeyCode::Enter if mode == AppMode::Config && config_pane == ConfigPane::FieldList => {
+                            if is_editing {
+                                // 1. SAVE THE DATA
+                                let registry = config_registry.lock().unwrap();
+                                let mut names: Vec<String> = registry.keys().cloned().collect();
+                                names.sort();
+                                
+                                if let Some(plugin_name) = names.get(selected_plugin_index) {
+                                    if let Some(schema) = registry.get(plugin_name) {
+                                        if let Some(field) = schema.fields.get(selected_field_index) {
+                                            let _ = tx_to_bot.send(AdminCommand::SaveConfig {
+                                                plugin: plugin_name.clone(),
+                                                key: field.key.clone(),
+                                                value: edit_buffer.clone(),
+                                            });
+                                        }
+                                    }
+                                }
+
+                                // 2. CLOSE EDITOR
+                                is_editing = false;
+                                edit_buffer.clear();
+                            } else {
+                                // OPEN EDITOR
+                                is_editing = true;
+                                let registry = config_registry.lock().unwrap();
+                                let mut names: Vec<String> = registry.keys().cloned().collect();
+                                names.sort();
+                                
+                                if let Some(plugin_name) = names.get(selected_plugin_index) {
+                                    if let Some(schema) = registry.get(plugin_name) {
+                                        if let Some(field) = schema.fields.get(selected_field_index) {
+                                            edit_buffer = field.default_value.clone();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // Typing inside the box
+                        KeyCode::Esc if is_editing => {
+                            is_editing = false;
+                            edit_buffer.clear();
+                        }
+                        KeyCode::Backspace if is_editing => { edit_buffer.pop(); }
+                        KeyCode::Char(c) if is_editing => { edit_buffer.push(c); }
                         _ => {}
                     }
                 }

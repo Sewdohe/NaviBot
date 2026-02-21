@@ -1,7 +1,6 @@
 use std::{collections::HashMap, sync::{Arc, Mutex}};
 use mlua::Lua;
 use rusqlite::Connection;
-use serde::Deserialize;
 use tokio::sync::mpsc::UnboundedSender;
 
 // Events: Bot -> TUI
@@ -19,7 +18,12 @@ pub enum BotEvent {
 pub enum AdminCommand {
     Shutdown,
     Reload,
-    SendMessage { channel_id: u64, content: String },
+    // SendMessage { channel_id: u64, content: String },
+    SaveConfig { 
+        plugin: String, 
+        key: String, 
+        value: String 
+    },
 }
 
 // ------------------------------------------------------------------

@@ -61,7 +61,6 @@ pub fn load_plugins(lua: &Lua) -> String {
 // --- HELPER: Read Slash Commands (Sync) ---
 pub fn read_slash_commands(lua: &Lua) -> Result<Vec<CreateCommand>, Error> {
     let navi: LuaTable = lua.globals().get("navi")?;
-    // Gracefully handle if slash_commands table doesn't exist yet
     let slash_cmds: LuaTable = match navi.get("slash_commands") {
         Ok(t) => t,
         Err(_) => return Ok(Vec::new()),
@@ -131,8 +130,6 @@ pub async fn init(
         Lua::unsafe_new_with(libs, LuaOptions::default())
     };
 
-    
-
     // 1. DATABASE
     let conn = Connection::open("navi.db").expect("Failed to open DB");
     conn.execute(
@@ -145,20 +142,15 @@ pub async fn init(
     // 2. CREATE 'navi' TABLE
     let navi = lua.create_table()?;
 
-    // --- LOGGING (Intercept print) ---
+    // --- LOGGING ---
     let tx_log = tui_tx.clone();
     navi.set("log", lua.create_function(move |_, msg: String| {
         let _ = tx_log.send(BotEvent::Log(msg));
         Ok(())
     })?)?;
 
-    // 2. Overwrite global print() (Lua side)
-    // We do this immediately so it applies to all plugins loaded later.
     lua.load(r#"
-        -- Save the old print just in case
         local old_print = print
-        
-        -- New Print Function
         _G.print = function(...)
             local args = {...}
             local parts = {}
@@ -166,27 +158,23 @@ pub async fn init(
                 table.insert(parts, tostring(v))
             end
             local msg = table.concat(parts, "\t")
-            
-            -- Get the caller's filename
             local info = debug.getinfo(2, "S")
             local source = info and info.short_src or "Unknown"
-            
-            -- Clean up path: "plugins/hello.lua" -> "hello.lua"
             source = source:gsub("plugins[/\\]", "")
-            
-            -- Send to TUI
             navi.log(string.format("[%s] %s", source, msg))
         end
     "#).exec()?;
 
     // --- MESSAGING ---
     let http_client = ctx.http.clone();
+    let tx_say = tui_tx.clone();
     let say_fn = lua.create_function(move |_, (channel_id, text): (u64, String)| {
         let http = http_client.clone();
+        let tx = tx_say.clone();
         tokio::spawn(async move {
             let channel = serenity::ChannelId::new(channel_id);
             if let Err(e) = channel.say(&http, text).await {
-                println!("Error sending message: {}", e);
+                let _ = tx.send(BotEvent::Log(format!("Error sending message: {}", e)));
             }
         });
         Ok(())
@@ -195,15 +183,17 @@ pub async fn init(
 
     // Add Role
     let http_add_role = ctx.http.clone();
+    let tx_add_role = tui_tx.clone();
     navi.set("add_role", lua.create_function(move |_, (guild_id, user_id, role_id): (String, String, String)| {
         let http = http_add_role.clone();
+        let tx = tx_add_role.clone();
         tokio::spawn(async move {
             let g_id = serenity::GuildId::new(guild_id.parse().unwrap_or(0));
             let u_id = serenity::UserId::new(user_id.parse().unwrap_or(0));
             let r_id = serenity::RoleId::new(role_id.parse().unwrap_or(0));
             
             if let Err(e) = http.add_member_role(g_id, u_id, r_id, None).await {
-                println!("Failed to add role: {}", e);
+                let _ = tx.send(BotEvent::Log(format!("Failed to add role: {}", e)));
             }
         });
         Ok(())
@@ -211,15 +201,17 @@ pub async fn init(
 
     // Remove Role
     let http_remove_role = ctx.http.clone();
+    let tx_remove_role = tui_tx.clone();
     navi.set("remove_role", lua.create_function(move |_, (guild_id, user_id, role_id): (String, String, String)| {
         let http = http_remove_role.clone();
+        let tx = tx_remove_role.clone();
         tokio::spawn(async move {
             let g_id = serenity::GuildId::new(guild_id.parse().unwrap_or(0));
             let u_id = serenity::UserId::new(user_id.parse().unwrap_or(0));
             let r_id = serenity::RoleId::new(role_id.parse().unwrap_or(0));
 
             if let Err(e) = http.remove_member_role(g_id, u_id, r_id, None).await {
-                println!("Failed to remove role: {}", e);
+                let _ = tx.send(BotEvent::Log(format!("Failed to remove role: {}", e)));
             }
         });
         Ok(())
@@ -227,28 +219,26 @@ pub async fn init(
 
     // React to Message
     let http_react = ctx.http.clone();
+    let tx_react = tui_tx.clone();
     navi.set("react", lua.create_function(move |_, (channel_id, message_id, emoji): (String, String, String)| {
         let http = http_react.clone();
+        let tx = tx_react.clone();
         tokio::spawn(async move {
             let c_id = serenity::ChannelId::new(channel_id.parse().unwrap_or(0));
             let m_id = serenity::MessageId::new(message_id.parse().unwrap_or(0));
             let reaction_type = serenity::ReactionType::try_from(emoji.as_str()).unwrap_or(serenity::ReactionType::Unicode(emoji));
 
             if let Err(e) = c_id.create_reaction(&http, m_id, reaction_type).await {
-                println!("Failed to react: {}", e);
+                let _ = tx.send(BotEvent::Log(format!("Failed to react: {}", e)));
             }
         });
         Ok(())
     })?)?;
 
-
-    
-    // navi.send_message(channel_id, { title="...", components={...} })
-    // We are renaming this to 'send_message' to reflect it does more than just embeds now.
-    // (You can keep 'send_embed' as an alias if you want, or just update your plugins)
+    // Send Message / Embed / Components
     let http_msg = ctx.http.clone();
+    let tx_send_msg = tui_tx.clone();
     
-    // Helper to parse Hex Color
     fn parse_color(c: Option<u32>) -> serenity::Color {
         match c {
             Some(val) => serenity::Color::new(val),
@@ -258,8 +248,8 @@ pub async fn init(
 
     navi.set("send_message", lua.create_function(move |_, (channel_id, data): (String, LuaTable)| {
         let http = http_msg.clone();
+        let tx = tx_send_msg.clone();
         
-        // 1. Parse Embed Fields
         let title: Option<String> = data.get("title").ok();
         let description: Option<String> = data.get("description").ok();
         let color: Option<u32> = data.get("color").ok();
@@ -273,7 +263,6 @@ pub async fn init(
             }
         }
 
-        // 2. Parse Components (Action Rows)
         let mut action_rows = Vec::new();
         let mut current_buttons = Vec::new();
 
@@ -300,11 +289,9 @@ pub async fn init(
                     }
                 } 
                 else if c_type == "select" {
-                    // Discord requires Select Menus to be on their own row!
-                    // If we have pending buttons, flush them to a row first.
                     if !current_buttons.is_empty() {
                         action_rows.push(serenity::CreateActionRow::Buttons(current_buttons.clone()));
-                        current_buttons.clear(); // Reset for the next batch
+                        current_buttons.clear(); 
                     }
                     
                     let custom_id: String = c.get("id").unwrap_or("select_menu".into());
@@ -336,7 +323,6 @@ pub async fn init(
             }
         }
 
-        // Flush any remaining buttons at the very end
         if !current_buttons.is_empty() {
             action_rows.push(serenity::CreateActionRow::Buttons(current_buttons));
         }
@@ -344,7 +330,6 @@ pub async fn init(
         tokio::spawn(async move {
             let mut msg = serenity::CreateMessage::new();
 
-            // Attach Embed
             if title.is_some() || description.is_some() {
                 let mut embed = serenity::CreateEmbed::new();
                 if let Some(t) = title { embed = embed.title(t); }
@@ -354,27 +339,26 @@ pub async fn init(
                 msg = msg.embed(embed);
             }
 
-            // Attach the completely formatted Action Rows
             if !action_rows.is_empty() {
                 msg = msg.components(action_rows);
             }
 
             let c_id = serenity::ChannelId::new(channel_id.parse().unwrap_or(0));
             if let Err(e) = c_id.send_message(&http, msg).await {
-                println!("Error sending message: {}", e);
+                let _ = tx.send(BotEvent::Log(format!("Error sending message: {}", e)));
             }
         });
         Ok(())
     })?)?;
 
-    // Config registry
+    // --- CONFIG REGISTRY ---
     let registry_for_lua = config_registry.clone();
+    let db_for_config = db.clone();
+    let tx_config = tui_tx.clone();
 
     navi.set("register_config", lua.create_function(move |_, (plugin_name, schema): (String, mlua::Table)| {
         let mut fields = Vec::new();
 
-        // Iterate over the Lua array of tables
-        // Example: { { key = "channel_id", type = "string" }, ... }
         for pair in schema.pairs::<mlua::Integer, mlua::Table>() {
             let (_, field_table) = pair?;
             
@@ -383,7 +367,6 @@ pub async fn init(
             let description: String = field_table.get("description").unwrap_or_default();
             let type_str: String = field_table.get("type").unwrap_or_else(|_| "string".to_string());
             
-            // Smart coercion: Convert whatever they typed as 'default' into a String
             let default_value: String = match field_table.get::<_, mlua::Value>("default") {
                 Ok(mlua::Value::String(s)) => s.to_str()?.to_string(),
                 Ok(mlua::Value::Integer(i)) => i.to_string(),
@@ -398,24 +381,36 @@ pub async fn init(
                 _ => ConfigType::String,
             };
 
+            // DIRECT SQLITE ACCESS - Safely read from the database to see if a value exists
+            let db_key = format!("config:{}:{}", plugin_name, key);
+            let mut actual_value: Option<String> = None;
+            
+            if let Ok(conn) = db_for_config.lock() {
+                if let Ok(mut stmt) = conn.prepare("SELECT value FROM kv_store WHERE key = ?1") {
+                    actual_value = stmt.query_row([&db_key], |row| row.get(0)).optional().unwrap_or(None);
+                }
+            }
+
+            // Use the actual DB value, or fallback to default (and save the default!)
+            let final_value = if let Some(val) = actual_value {
+                val
+            } else {
+                if let Ok(conn) = db_for_config.lock() {
+                    let _ = conn.execute(
+                        "INSERT OR REPLACE INTO kv_store (key, value) VALUES (?1, ?2)",
+                        (&db_key, &default_value),
+                    );
+                }
+                default_value.clone()
+            };
+
             fields.push(ConfigField {
                 key: key.clone(),
                 name,
                 description,
                 field_type,
-                default_value: default_value.clone(),
+                default_value: final_value, 
             });
-
-            // --- DATABASE DEFAULT INJECTION (Optional but recommended) ---
-            // If you want the bot to automatically populate the database with defaults 
-            // so they aren't 'nil' the first time the plugin runs, do it here!
-            /*
-            let db_key = format!("config:{}:{}", plugin_name, key);
-            // Pseudo-code assuming your DB implementation:
-            if db_for_config.get(&db_key).is_none() {
-                db_for_config.set(&db_key, &default_value);
-            }
-            */
         }
 
         let plugin_schema = PluginSchema {
@@ -423,17 +418,15 @@ pub async fn init(
             fields,
         };
 
-        // Lock the shared registry and save the schema so the TUI can read it
         {
             let mut registry = registry_for_lua.lock().unwrap();
             registry.insert(plugin_name.clone(), plugin_schema);
         }
 
-        println!("⚙️ Registered config schema for plugin: {}", plugin_name);
+        let _ = tx_config.send(BotEvent::Log(format!("⚙️ Registered config schema for plugin: {}", plugin_name)));
 
         Ok(())
     })?)?;
-
 
     // --- DB API ---
     let db_table = lua.create_table()?;
@@ -472,9 +465,7 @@ pub async fn init(
     )?;
     navi.set("db", db_table)?;
 
-    // --- REGISTRIES (This is what you were missing!) ---
-    
-    // A. Listeners (for dispatcher)
+    // --- REGISTRIES ---
     let listeners = lua.create_table()?;
     navi.set("listeners", listeners)?;
     
@@ -488,7 +479,6 @@ pub async fn init(
         })?,
     )?;
 
-    // B. Text Commands (for dispatcher)
     let commands = lua.create_table()?;
     navi.set("commands", commands)?;
 
@@ -502,7 +492,6 @@ pub async fn init(
         })?,
     )?;
 
-    // C. Slash Commands
     let slash_cmds = lua.create_table()?;
     navi.set("slash_commands", slash_cmds)?;
 
@@ -527,7 +516,7 @@ pub async fn init(
     // 3. FINISH SETUP
     lua.globals().set("navi", navi)?;
 
-    // 4. LOAD CONDUCTOR (The generic handler that calls listeners)
+    // 4. LOAD CONDUCTOR 
     lua.load(
         r#"
         function on_message(msg)

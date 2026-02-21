@@ -1,0 +1,62 @@
+name: Build and Release Navi Engine
+
+on:
+  push:
+    tags:
+      - 'v*' # This action ONLY runs when you push a tag that starts with 'v' (like v1.0.0)
+
+jobs:
+  build-and-release:
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact_name: navi-linux.zip
+            binary_name: navi
+          - os: windows-latest
+            artifact_name: navi-windows.zip
+            binary_name: navi.exe
+          - os: macos-latest
+            artifact_name: navi-macos.zip
+            binary_name: navi
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build Release Binary
+        run: cargo build --release
+
+      - name: Package Release (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir release_pkg
+          cp target/release/${{ matrix.binary_name }} release_pkg/
+          mkdir release_pkg/plugins
+          echo "DISCORD_TOKEN=your_token_here" > release_pkg/.env.example
+          # Copy type definitions if they exist in the root
+          cp navi_api.lua release_pkg/ 2>/dev/null || : 
+          cd release_pkg
+          zip -r ../${{ matrix.artifact_name }} .
+
+      - name: Package Release (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path release_pkg
+          Copy-Item "target/release/${{ matrix.binary_name }}" -Destination release_pkg/
+          New-Item -ItemType Directory -Force -Path release_pkg/plugins
+          Set-Content -Path release_pkg/.env.example -Value "DISCORD_TOKEN=your_token_here"
+          if (Test-Path "navi_api.lua") { Copy-Item "navi_api.lua" -Destination release_pkg/ }
+          Compress-Archive -Path release_pkg/* -DestinationPath ${{ matrix.artifact_name }}
+
+      - name: Upload Release Assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.artifact_name }}
+          draft: true # Creates a draft release so you can edit the notes before publishing!

@@ -45,12 +45,8 @@ pub fn run(
     let mut logs: Vec<String> = Vec::new();
     let mut input_mode = false;
     let mut input_buffer = String::new();
-    
-    // New State for Config Dashboard
-    let _mode = AppMode::Logs;
-    let _selected_plugin_index = 0;
 
-    // New State for Config Dashboard
+    // State for Config Dashboard
     let mut mode = AppMode::Logs;
     let mut config_pane = ConfigPane::PluginList; // Left or Right side
     let mut selected_plugin_index = 0;
@@ -81,8 +77,27 @@ pub fn run(
         terminal.draw(|f| {
             let size = f.area();
 
+            // --- 1. THE GLOBAL HEADER ---
+            // Slice off the top 1 row of the entire screen
+            let main_chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(1), // Top row for header
+                    Constraint::Min(0),    // The rest for the app
+                ].as_ref())
+                .split(size);
+
+            // Draw the slick header bar into that top row
+            let header = Paragraph::new(Line::from(vec![
+                Span::styled(" 🤖 Navi Engine v1.0 ", Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD)),
+                Span::raw(" | "),
+                Span::styled("🟢 System Online", Style::default().fg(Color::Green)),
+            ]));
+            f.render_widget(header, main_chunks[0]);
+
+            // --- 2. ROUTE THE REST OF THE APP ---
             if mode == AppMode::Logs {
-                // --- 1. LOGS VIEW (Original) ---
+                // --- LOGS VIEW ---
                 let chunks = Layout::default()
                     .direction(Direction::Vertical)
                     .margin(1)
@@ -90,7 +105,7 @@ pub fn run(
                         Constraint::Min(1),    // Logs (Grow to fill)
                         Constraint::Length(3), // Input Bar
                     ].as_ref())
-                    .split(size);
+                    .split(main_chunks[1]); // Uses the space below the header
 
                 // 1. Map them directly to `Line` objects instead of `ListItem`
                 let log_lines: Vec<Line> = logs.iter().map(|msg| {
@@ -145,17 +160,16 @@ pub fn run(
                 f.render_widget(input_widget, chunks[1]);
 
             } else if mode == AppMode::Config {
+                // --- CONFIG VIEW ---
                 let vertical_chunks = Layout::default()
                         .direction(Direction::Vertical)
                         .constraints([Constraint::Min(0), Constraint::Length(3)])
-                        .split(f.area());
-
+                        .split(main_chunks[1]); // Uses the space below the header
                 
-                // --- 2. CONFIG VIEW (New) ---
                 let chunks = Layout::default()
                         .direction(Direction::Horizontal)
                         .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
-                        .split(vertical_chunks[0]); // <-- Notice we split vertical_chunks[0] now!
+                        .split(vertical_chunks[0]); 
 
                 let registry = config_registry.lock().unwrap();
                 let mut plugin_names: Vec<String> = registry.keys().cloned().collect();
@@ -192,7 +206,7 @@ pub fn run(
                         .block(Block::default()
                             .title(" 🔌 Plugins (Up/Down) ")
                             .borders(Borders::ALL)
-                            .border_style(left_border_style) // <-- Apply the dynamic color here!
+                            .border_style(left_border_style)
                         );
                     f.render_widget(left_pane, chunks[0]);
 
@@ -238,7 +252,6 @@ pub fn run(
 
                     text.push(Line::from(Span::styled("Press 'l' to return to logs.", Style::default().fg(Color::DarkGray))));
 
-                    // --- THIS IS WHERE `text` IS MOVED ---
                     let right_pane = Paragraph::new(text)
                         .block(Block::default()
                             .title(if config_pane == ConfigPane::FieldList { "⚙️ Settings (Editing)" } else { "⚙️ Settings" })
@@ -272,7 +285,6 @@ pub fn run(
 
                         let safe_index = dropdown_selected_index.min(list_len.saturating_sub(1));
 
-                        // Dynamically build the list based on the field type!
                         let items: Vec<ListItem> = match active_field_type {
                             ConfigType::Channel => state.channels.iter().enumerate().map(|(i, (id, name))| {
                                 if i == safe_index {
@@ -285,8 +297,6 @@ pub fn run(
                                 } else { ListItem::new(format!("  📁 {}", name)) }
                             }).collect(),
                             ConfigType::Role => state.roles.iter().enumerate().map(|(i, role)| {
-                                // TRUE RGB COLORS FROM DISCORD!
-                                // Default role color is (0,0,0), make it white so it doesn't vanish on black terminals
                                 let display_color = if role.color == (0, 0, 0) { Color::White } else { Color::Rgb(role.color.0, role.color.1, role.color.2) };
                                 
                                 let mut style = Style::default().fg(display_color);
@@ -328,9 +338,7 @@ pub fn run(
                             .border_style(Style::default().fg(Color::White))
                         );
                     
-                    // Render the footer into that bottom slice we reserved earlier!
                     f.render_widget(controls, vertical_chunks[1]);
-                    
             }
         })?;
 
@@ -450,7 +458,6 @@ pub fn run(
                                             }
 
                                             if let Some(id) = selected_id {
-                                                // INSTANT VISUAL UPDATE
                                                 field.default_value = id.clone(); 
                                                 
                                                 let _ = tx_to_bot.send(AdminCommand::SaveConfig {
@@ -474,7 +481,6 @@ pub fn run(
                                     if let Some(schema) = registry.get_mut(&plugin_name) {
                                         if let Some(field) = schema.fields.get_mut(selected_field_index) {
                                             
-                                            // INSTANT VISUAL UPDATE
                                             field.default_value = edit_buffer.clone(); 
                                             
                                             let _ = tx_to_bot.send(AdminCommand::SaveConfig {
@@ -517,7 +523,6 @@ pub fn run(
                                                 is_editing = true;
                                                 edit_buffer = field.default_value.clone();
                                             }
-                                            
                                         }
                                     }
                                 }

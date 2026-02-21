@@ -14,13 +14,13 @@ jobs:
         include:
           - os: ubuntu-latest
             artifact_name: navi-linux.zip
-            binary_name: navi
+            binary_name: navi_bot
           - os: windows-latest
             artifact_name: navi-windows.zip
-            binary_name: navi.exe
+            binary_name: navi_bot.exe
           - os: macos-latest
             artifact_name: navi-macos.zip
-            binary_name: navi
+            binary_name: navi_bot
 
     steps:
       - name: Checkout Code

@@ -92,8 +92,8 @@ pub fn run(
                     ].as_ref())
                     .split(size);
 
-                let log_items: Vec<ListItem> = logs.iter().map(|msg| {
-                        // Determine color based on emojis or keywords
+                // 1. Map them directly to `Line` objects instead of `ListItem`
+                let log_lines: Vec<Line> = logs.iter().map(|msg| {
                         let style = if msg.contains("❌") || msg.to_lowercase().contains("error") {
                             Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
                         } else if msg.contains("✅") {
@@ -105,22 +105,32 @@ pub fn run(
                         } else if msg.contains("👋") {
                             Style::default().fg(Color::LightMagenta).add_modifier(Modifier::BOLD)
                         } else if msg.starts_with("[") && msg.contains("]") { 
-                            // Specifically catch Lua print() logs like "[reaction_roles.lua] ..."
                             Style::default().fg(Color::LightBlue)
                         } else {
-                            // Standard system logs
                             Style::default().fg(Color::Gray)
                         };
 
-                        ListItem::new(Line::from(Span::styled(msg, style)))
+                        Line::from(Span::styled(msg, style))
                     }).collect();
                 
-                let logs_pane = List::new(log_items)
+                // --- NEW: Dynamically calculate the safe scroll distance ---
+                // Get the height of the box, minus 2 for the top/bottom borders
+                let visible_height = chunks[0].height.saturating_sub(2); 
+                // Only scroll if we have more logs than we have vertical space!
+                let scroll_offset = (log_lines.len() as u16).saturating_sub(visible_height);
+
+                // 2. Use a Paragraph instead of a List
+                let logs_pane = Paragraph::new(log_lines)
                         .block(Block::default()
                             .title(" Navi Logs ")
                             .borders(Borders::ALL)
                             .border_style(Style::default().fg(Color::White))
-                        );
+                        )
+                        // 3. Turn on word wrapping!
+                        .wrap(ratatui::widgets::Wrap { trim: true }) 
+                        // 4. Safely scroll using our math above
+                        .scroll((scroll_offset, 0)); 
+                        
                 f.render_widget(logs_pane, chunks[0]);
 
                 let input_text = if input_mode {

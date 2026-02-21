@@ -20,7 +20,9 @@ navi.on("message_sent", function(user_id)
 end)
 
 -- 3. A command to view the stats!
-navi.create_slash("stats", "View bot and server statistics", {}, function(ctx)
+navi.create_slash("stats", "View bot and server statistics", {}, 
+---@param ctx NaviSlashCtx
+function(ctx)
     local joins = navi.db.get("stats:total_joins") or "0"
     local tickets = navi.db.get("stats:total_tickets") or "0"
     local messages = navi.db.get("stats:total_messages") or "0" -- NEW!

@@ -9,7 +9,7 @@ navi.register_config("tickets", {
 
 -- 2. The Slash Command to spawn the panel
 navi.create_slash("spawn_tickets", "Spawns the ticket creation panel", {}, 
----@param ctx NaviCtx
+---@param ctx NaviSlashCtx
 function(ctx)
     local channel_id = navi.db.get("config:tickets:panel_channel")
     if channel_id == "" or channel_id == nil then
@@ -30,7 +30,7 @@ end)
 
 -- 3. The Button Click Handler (Clean API!)
 navi.register_component("btn_create_ticket", 
----@param ctx NaviCtx
+---@param ctx NaviComponentCtx
 function(ctx)
     local category_id = navi.db.get("config:tickets:ticket_category")
     local support_role = navi.db.get("config:tickets:support_role")
@@ -60,7 +60,7 @@ function(ctx)
 end)
 
 navi.register_component("btn_close_ticket", 
----@param ctx NaviCtx
+---@param ctx NaviComponentCtx
 function(ctx)
     -- We could add logic here to save a transcript first, 
     -- but for now, we just immediately delete the channel!

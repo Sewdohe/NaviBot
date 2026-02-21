@@ -35,7 +35,7 @@ navi.register_config("reaction_roles", {{
 
 -- 2. Slash Command to Spawn the Menu
 navi.create_slash("spawn_roles", "Spawns the self-assign role menu", {},
----@param ctx NaviCtx
+---@param ctx NaviSlashCtx
 function(ctx)
     local channel_id = navi.db.get("config:reaction_roles:channel_id")
 
@@ -75,7 +75,7 @@ end)
 
 -- 3. Handle the Dropdown Selection (Using the new clean API!)
 navi.register_component("role_dropdown", 
----@param ctx NaviCtx
+---@param ctx NaviComponentCtx
 function(ctx)
     local choice = ctx.values[1]
     local role_id = ""

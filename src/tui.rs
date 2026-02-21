@@ -71,7 +71,7 @@ pub fn run(
             match event {
                 BotEvent::Log(s) => logs.push(s),
                 BotEvent::UserJoined(u) => logs.push(format!("👋 User Joined: {}", u)),
-                _ => {}
+                // _ => {}
             }
         }
         // Keep log size manageable
@@ -92,15 +92,36 @@ pub fn run(
                     ].as_ref())
                     .split(size);
 
-                let log_items: Vec<ListItem> = logs
-                    .iter()
-                    .rev() // Show newest at bottom
-                    .map(|msg| ListItem::new(Line::from(Span::raw(msg))))
-                    .collect();
+                let log_items: Vec<ListItem> = logs.iter().map(|msg| {
+                        // Determine color based on emojis or keywords
+                        let style = if msg.contains("❌") || msg.to_lowercase().contains("error") {
+                            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
+                        } else if msg.contains("✅") {
+                            Style::default().fg(Color::Green)
+                        } else if msg.contains("⚠️") {
+                            Style::default().fg(Color::Yellow)
+                        } else if msg.contains("⚙️") || msg.contains("📡") || msg.contains("💾") {
+                            Style::default().fg(Color::Cyan)
+                        } else if msg.contains("👋") {
+                            Style::default().fg(Color::LightMagenta).add_modifier(Modifier::BOLD)
+                        } else if msg.starts_with("[") && msg.contains("]") { 
+                            // Specifically catch Lua print() logs like "[reaction_roles.lua] ..."
+                            Style::default().fg(Color::LightBlue)
+                        } else {
+                            // Standard system logs
+                            Style::default().fg(Color::Gray)
+                        };
+
+                        ListItem::new(Line::from(Span::styled(msg, style)))
+                    }).collect();
                 
-                let logs_widget = List::new(log_items)
-                    .block(Block::default().borders(Borders::ALL).title(" Navi Logs "));
-                f.render_widget(logs_widget, chunks[0]);
+                let logs_pane = List::new(log_items)
+                        .block(Block::default()
+                            .title(" Navi Logs ")
+                            .borders(Borders::ALL)
+                            .border_style(Style::default().fg(Color::White))
+                        );
+                f.render_widget(logs_pane, chunks[0]);
 
                 let input_text = if input_mode {
                     format!("> {}_", input_buffer)
@@ -114,12 +135,17 @@ pub fn run(
                 f.render_widget(input_widget, chunks[1]);
 
             } else if mode == AppMode::Config {
+                let vertical_chunks = Layout::default()
+                        .direction(Direction::Vertical)
+                        .constraints([Constraint::Min(0), Constraint::Length(3)])
+                        .split(f.area());
+
+                
                 // --- 2. CONFIG VIEW (New) ---
                 let chunks = Layout::default()
-                    .direction(Direction::Horizontal)
-                    .margin(1)
-                    .constraints([Constraint::Percentage(30), Constraint::Percentage(70)].as_ref())
-                    .split(size);
+                        .direction(Direction::Horizontal)
+                        .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
+                        .split(vertical_chunks[0]); // <-- Notice we split vertical_chunks[0] now!
 
                 let registry = config_registry.lock().unwrap();
                 let mut plugin_names: Vec<String> = registry.keys().cloned().collect();
@@ -137,22 +163,28 @@ pub fn run(
                 }
 
                 // Left Pane: Plugin List
-                let items: Vec<ListItem> = plugin_names
-                    .iter()
-                    .enumerate()
-                    .map(|(i, name)| {
+                let items: Vec<ListItem> = plugin_names.iter().enumerate().map(|(i, name)| {
                         if i == selected_plugin_index {
-                            ListItem::new(format!("> {}", name))
-                                .style(Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
+                            ListItem::new(format!("> {}", name)).style(Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
                         } else {
-                            ListItem::new(name.clone())
+                            ListItem::new(format!("  {}", name))
                         }
-                    })
-                    .collect();
+                    }).collect();
 
-                let list = List::new(items)
-                    .block(Block::default().title("🔌 Plugins (Up/Down) ").borders(Borders::ALL));
-                f.render_widget(list, chunks[0]);
+                // --- CHECK IF LEFT PANE IS ACTIVE ---
+                let left_border_style = if config_pane == ConfigPane::PluginList { 
+                    Style::default().fg(Color::Green) 
+                } else { 
+                    Style::default() 
+                };
+
+                let left_pane = List::new(items)
+                        .block(Block::default()
+                            .title(" 🔌 Plugins (Up/Down) ")
+                            .borders(Borders::ALL)
+                            .border_style(left_border_style) // <-- Apply the dynamic color here!
+                        );
+                    f.render_widget(left_pane, chunks[0]);
 
 
                 // Right Pane: Config Fields
@@ -266,6 +298,29 @@ pub fn run(
                         f.render_widget(list, popup_area);
                     }
                 }
+
+                // --- DYNAMIC CONTROLS FOOTER ---
+                    let help_text = if is_dropdown_open {
+                        "Press 'Up/Down' to scroll | 'Enter' to confirm selection | 'Esc' to cancel"
+                    } else if is_editing {
+                        "Type your value | Press 'Enter' to save | 'Esc' to cancel"
+                    } else if config_pane == ConfigPane::PluginList {
+                        "Press 'Up/Down' to select plugin | 'Right' or 'Enter' to configure | 'l' for Logs | 'q' to quit"
+                    } else {
+                        "Press 'Up/Down' to select field | 'Enter' to edit | 'Left' or 'Esc' for plugins | 'l' for Logs"
+                    };
+
+                    let controls = Paragraph::new(help_text)
+                        .style(Style::default().fg(Color::DarkGray))
+                        .block(Block::default()
+                            .title(" Controls ")
+                            .borders(Borders::ALL)
+                            .border_style(Style::default().fg(Color::White))
+                        );
+                    
+                    // Render the footer into that bottom slice we reserved earlier!
+                    f.render_widget(controls, vertical_chunks[1]);
+                    
             }
         })?;
 
@@ -424,20 +479,35 @@ pub fn run(
                                 edit_buffer.clear();
                             } 
                             else {
-                                // 3. Open Editor or Dropdown
-                                let registry = config_registry.lock().unwrap();
+                                // 3. Open Editor, Dropdown, or Toggle Boolean
+                                let mut registry = config_registry.lock().unwrap();
                                 let mut names: Vec<String> = registry.keys().cloned().collect();
                                 names.sort();
-                                if let Some(plugin_name) = names.get(selected_plugin_index) {
-                                    if let Some(schema) = registry.get(plugin_name) {
-                                        if let Some(field) = schema.fields.get(selected_field_index) {
+                                
+                                if let Some(plugin_name) = names.get(selected_plugin_index).cloned() {
+                                    if let Some(schema) = registry.get_mut(&plugin_name) {
+                                        if let Some(field) = schema.fields.get_mut(selected_field_index) {
+                                            
                                             if field.field_type == ConfigType::Channel || field.field_type == ConfigType::Role || field.field_type == ConfigType::Category {
                                                 is_dropdown_open = true;
                                                 dropdown_selected_index = 0;
+                                            } else if field.field_type == ConfigType::Boolean {
+                                                // --- INSTANT BOOLEAN TOGGLE ---
+                                                let new_val = if field.default_value == "true" { "false".to_string() } else { "true".to_string() };
+                                                
+                                                field.default_value = new_val.clone(); // Optimistic UI update
+                                                
+                                                let _ = tx_to_bot.send(AdminCommand::SaveConfig {
+                                                    plugin: plugin_name.clone(),
+                                                    key: field.key.clone(),
+                                                    value: new_val,
+                                                });
                                             } else {
+                                                // Normal Text Box
                                                 is_editing = true;
                                                 edit_buffer = field.default_value.clone();
                                             }
+                                            
                                         }
                                     }
                                 }

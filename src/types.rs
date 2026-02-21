@@ -8,7 +8,7 @@ use tokio::sync::mpsc::UnboundedSender;
 #[derive(Debug)]
 pub enum BotEvent {
     Log(String),
-    Status { uptime: String, shard_id: u32 },
+    // Status { uptime: String, shard_id: u32 },
     UserJoined(String),
 }
 

@@ -32,21 +32,41 @@ pub fn load_plugins(lua: &Lua) -> String {
         return "⚠️ 'plugins/' folder not found!".to_string();
     }
 
-    if let Ok(paths) = std::fs::read_dir("plugins") {
-        for path in paths {
-            if let Ok(path) = path {
-                let p = path.path();
-                if p.extension().and_then(|s| s.to_str()) == Some("lua") {
-                    if let Ok(code) = std::fs::read_to_string(&p) {
-                        let chunk = lua.load(&code).set_name(p.to_string_lossy());
-                        if let Err(e) = chunk.exec() {
-                            error_msg = Some(format!("❌ Error in {:?}: \n{}", p, e));
-                            break;
-                        }
-                        count += 1;
-                        details.push_str(&format!("Loaded: {:?}\n", p.file_name().unwrap()));
-                    }
+    // --- BAKE IN THE CORE ENGINE API ---
+    let core_events = include_str!("../core/events.lua");
+    let core_components = include_str!("../core/components.lua");
+    let core_dispatcher = include_str!("../core/dispatcher.lua");
+
+    // Execute them in exact order
+    let _ = lua.load(core_events).set_name("core:events").exec();
+    let _ = lua.load(core_components).set_name("core:components").exec();
+    let _ = lua.load(core_dispatcher).set_name("core:dispatcher").exec();
+
+    if let Ok(entries) = std::fs::read_dir("plugins") {
+        // 1. Collect all valid .lua files into a Vector first
+        let mut lua_files = Vec::new();
+        for entry in entries {
+            if let Ok(file) = entry {
+                let p = file.path();
+                if p.is_file() && p.extension().and_then(|s| s.to_str()) == Some("lua") {
+                    lua_files.push(p);
                 }
+            }
+        }
+
+        // 2. THE MAGIC FIX: Sort them alphabetically!
+        lua_files.sort();
+
+        // 3. Now execute them in guaranteed order
+        for p in lua_files {
+            if let Ok(code) = std::fs::read_to_string(&p) {
+                let chunk = lua.load(&code).set_name(p.to_string_lossy());
+                if let Err(e) = chunk.exec() {
+                    error_msg = Some(format!("❌ Error in {:?}: \n{}", p, e));
+                    break;
+                }
+                count += 1;
+                details.push_str(&format!("Loaded: {:?}\n", p.file_name().unwrap()));
             }
         }
     }
@@ -182,6 +202,107 @@ pub async fn init(
     })?;
     navi.set("say", say_fn)?;
 
+    // --- BOT PRESENCE / STATUS ---
+    let ctx_status = ctx.clone();
+    navi.set("set_status", lua.create_function(move |_, (activity_type, text): (String, String)| {
+        let ctx = ctx_status.clone();
+        
+        let activity = match activity_type.to_lowercase().as_str() {
+            "playing" => Some(serenity::ActivityData::playing(text)),
+            "listening" => Some(serenity::ActivityData::listening(text)),
+            "watching" => Some(serenity::ActivityData::watching(text)),
+            "competing" => Some(serenity::ActivityData::competing(text)),
+            "custom" => Some(serenity::ActivityData::custom(text)),
+            _ => None, // Clears the status if they type something invalid or "none"
+        };
+
+        ctx.set_activity(activity);
+        Ok(())
+    })?)?;
+
+    // CREATE CHANNEL
+    let ctx_channel = ctx.clone();
+    navi.set("create_channel", lua.create_function(move |_, (guild_id, name, options): (String, String, mlua::Table)| {
+        let http = ctx_channel.http.clone();
+
+        // 1. Extract optional parameters from the Lua table
+        let category_id: Option<String> = options.get("category_id").unwrap_or(None);
+        let user_id: Option<String> = options.get("user_id").unwrap_or(None);
+        let role_id: Option<String> = options.get("role_id").unwrap_or(None);
+        let welcome_message: Option<String> = options.get("welcome_message").unwrap_or(None);
+        let close_button: Option<bool> = options.get("close_button").unwrap_or(None);
+
+        tokio::spawn(async move {
+            use poise::serenity_prelude as serenity;
+            let gid = serenity::GuildId::new(guild_id.parse().unwrap_or(0));
+
+            // 2. Start building the generic channel
+            let mut builder = serenity::CreateChannel::new(&name)
+                .kind(serenity::ChannelType::Text);
+
+            // 3. Apply Category if provided
+            if let Some(cid_str) = category_id {
+                if let Ok(cid) = cid_str.parse::<u64>() {
+                    builder = builder.category(serenity::ChannelId::new(cid));
+                }
+            }
+
+            // 4. Apply Private Permissions if a user or role is provided
+            if user_id.is_some() || role_id.is_some() {
+                let everyone_id = serenity::RoleId::new(gid.get());
+                let mut perms = vec![
+                    serenity::PermissionOverwrite {
+                        allow: serenity::Permissions::empty(),
+                        deny: serenity::Permissions::VIEW_CHANNEL, // Deny @everyone
+                        kind: serenity::PermissionOverwriteType::Role(everyone_id),
+                    }
+                ];
+
+                if let Some(uid_str) = user_id {
+                    if let Ok(uid) = uid_str.parse::<u64>() {
+                        perms.push(serenity::PermissionOverwrite {
+                            allow: serenity::Permissions::VIEW_CHANNEL | serenity::Permissions::SEND_MESSAGES,
+                            deny: serenity::Permissions::empty(),
+                            kind: serenity::PermissionOverwriteType::Member(serenity::UserId::new(uid)),
+                        });
+                    }
+                }
+
+                if let Some(rid_str) = role_id {
+                    if let Ok(rid) = rid_str.parse::<u64>() {
+                        perms.push(serenity::PermissionOverwrite {
+                            allow: serenity::Permissions::VIEW_CHANNEL | serenity::Permissions::SEND_MESSAGES,
+                            deny: serenity::Permissions::empty(),
+                            kind: serenity::PermissionOverwriteType::Role(serenity::RoleId::new(rid)),
+                        });
+                    }
+                }
+
+                builder = builder.permissions(perms);
+            }
+
+            // 5. Create it and send the optional welcome message!
+            if let Ok(channel) = gid.create_channel(&http, builder).await {
+                if let Some(msg_text) = welcome_message {
+                    let mut msg = serenity::CreateMessage::new().content(msg_text);
+                    
+                    // --- ATTACH THE CLOSE BUTTON IF REQUESTED ---
+                    if close_button.unwrap_or(false) {
+                        let action_row = serenity::CreateActionRow::Buttons(vec![
+                            serenity::CreateButton::new("btn_close_ticket")
+                                .label("🔒 Close Ticket")
+                                .style(serenity::ButtonStyle::Danger), // Makes the button Red!
+                        ]);
+                        msg = msg.components(vec![action_row]);
+                    }
+
+                    let _ = channel.id.send_message(&http, msg).await;
+                }
+            }
+        });
+        Ok(())
+    })?)?;
+
     // Add Role
     let http_add_role = ctx.http.clone();
     let tx_add_role = tui_tx.clone();
@@ -213,6 +334,19 @@ pub async fn init(
 
             if let Err(e) = http.remove_member_role(g_id, u_id, r_id, None).await {
                 let _ = tx.send(BotEvent::Log(format!("Failed to remove role: {}", e)));
+            }
+        });
+        Ok(())
+    })?)?;
+
+    // --- DELETE CHANNEL ---
+    let ctx_del = ctx.clone();
+    navi.set("delete_channel", lua.create_function(move |_, channel_id: String| {
+        let http = ctx_del.http.clone();
+        tokio::spawn(async move {
+            use poise::serenity_prelude as serenity;
+            if let Ok(cid) = channel_id.parse::<u64>() {
+                let _ = serenity::ChannelId::new(cid).delete(&http).await;
             }
         });
         Ok(())

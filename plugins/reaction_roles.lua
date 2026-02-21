@@ -42,34 +42,28 @@ navi.create_slash("spawn_roles", "Spawns the self-assign role menu", {}, functio
     ctx.reply("✅ Role menu spawned successfully!", true)
 end)
 
--- 3. Handle the Dropdown Selection
--- Note: Make sure your 00_dispatcher.lua passes component interactions to this!
-function on_component(ctx)
-    if ctx.custom_id == "role_dropdown" then
-        -- Dropdowns return an array of selections, we just want the first one
-        local choice = ctx.values[1] 
-        local role_id = ""
-        local role_name = ""
+-- 3. Handle the Dropdown Selection (Using the new clean API!)
+navi.register_component("role_dropdown", function(ctx)
+    local choice = ctx.values[1] 
+    local role_id = ""
+    local role_name = ""
 
-        -- Match their choice to the TUI config
-        if choice == "role_1" then
-            role_id = navi.db.get("config:reaction_roles:role_1_id")
-            role_name = navi.db.get("config:reaction_roles:role_1_name")
-        elseif choice == "role_2" then
-            role_id = navi.db.get("config:reaction_roles:role_2_id")
-            role_name = navi.db.get("config:reaction_roles:role_2_name")
-        end
-
-        -- Safety check
-        if role_id == "" or role_id == nil then
-            ctx.reply("❌ This role hasn't been fully configured by the admin yet.", true)
-            return
-        end
-
-        -- Give them the role!
-        navi.add_role(ctx.guild_id, ctx.user_id, role_id)
-        
-        -- Reply Ephemerally (only they can see it)
-        ctx.reply("✅ You have been given the **" .. role_name .. "** role!", true)
+    -- Match their choice to the TUI config
+    if choice == "role_1" then
+        role_id = navi.db.get("config:reaction_roles:role_1_id")
+        role_name = navi.db.get("config:reaction_roles:role_1_name")
+    elseif choice == "role_2" then
+        role_id = navi.db.get("config:reaction_roles:role_2_id")
+        role_name = navi.db.get("config:reaction_roles:role_2_name")
     end
-end
+
+    -- Safety check
+    if role_id == "" or role_id == nil then
+        ctx.reply("❌ This role hasn't been fully configured by the admin yet.", true)
+        return
+    end
+
+    -- Give them the role!
+    navi.add_role(ctx.guild_id, ctx.user_id, role_id)
+    ctx.reply("✅ You have been given the **" .. role_name .. "** role!", true)
+end)

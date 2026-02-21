@@ -213,14 +213,22 @@ pub async fn event_handler(
 
     // Member join events
     if let serenity::FullEvent::GuildMemberAddition { new_member } = event {
+        // 1. Log to the TUI 
         let _ = data.tui_tx.send(crate::types::BotEvent::UserJoined(new_member.user.name.clone()));
         
+        // 2. Trigger the Lua function safely
         let lua = data.lua.lock().unwrap();
         if let Ok(func) = lua.globals().get::<_, mlua::Function>("on_member_join") {
-            let _ = func.call::<_, ()>((
+            // Check for errors instead of ignoring them!
+            if let Err(e) = func.call::<_, ()>((
                 new_member.user.id.get().to_string(), 
                 new_member.user.name.clone()
-            ));
+            )) {
+                // Send the exact Lua crash log to the TUI so we can debug it
+                let _ = data.tui_tx.send(crate::types::BotEvent::Log(
+                    format!("❌ Greeter Crash: {}", e)
+                ));
+            }
         };
     }
 
@@ -262,6 +270,7 @@ pub async fn event_handler(
     if let serenity::FullEvent::InteractionCreate { interaction } = event {
         if let serenity::Interaction::Component(comp) = interaction {
             let user_id = comp.user.id.get().to_string();
+            let username = comp.user.name.clone();
             let custom_id = comp.data.custom_id.clone();
             let channel_id = comp.channel_id.get().to_string();
             let guild_id = comp.guild_id.map(|g| g.get().to_string());
@@ -278,6 +287,7 @@ pub async fn event_handler(
                     if let Ok(table) = ctx_lua.create_table() {
                         let _ = table.set("custom_id", custom_id);
                         let _ = table.set("user_id", user_id);
+                        let _ = table.set("username", username);
                         let _ = table.set("channel_id", channel_id);
                         let _ = table.set("values", values);
                         let _ = table.set("guild_id", guild_id);

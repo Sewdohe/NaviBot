@@ -1,0 +1,25 @@
+print("--- Loading Core: Event Bus ---")
+
+navi._events = {}
+
+-- 1. Listen for an event
+navi.on = function(event_name, callback)
+    if not navi._events[event_name] then
+        navi._events[event_name] = {}
+    end
+    table.insert(navi._events[event_name], callback)
+end
+
+-- 2. Broadcast an event to anyone listening
+navi.emit = function(event_name, data)
+    local listeners = navi._events[event_name]
+    if listeners then
+        for _, callback in ipairs(listeners) do
+            -- Run safely so one bad plugin doesn't crash the bus
+            local success, err = pcall(callback, data)
+            if not success then
+                print("⚠️ Event Bus Error (" .. event_name .. "): " .. tostring(err))
+            end
+        end
+    end
+end

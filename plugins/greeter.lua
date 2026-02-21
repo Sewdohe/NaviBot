@@ -12,6 +12,9 @@ navi.register_config("greeter", {
 
 -- 2. The Logic (Called by Rust when someone joins)
 function on_member_join(user_id, username)
+    -- emit an event for new member joining.
+    navi.emit("new_member_joined", username)
+
     -- Fetch current settings from the DB
     local enabled = navi.db.get("config:greeter:enabled")
     if enabled == "false" or enabled == nil then return end

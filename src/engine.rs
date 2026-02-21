@@ -162,6 +162,7 @@ pub async fn init(
 
     // 2. CREATE 'navi' TABLE
     let navi = lua.create_table()?;
+    lua.globals().set("navi", navi.clone())?; // <--- INJECT IT IMMEDIATELY
 
     // --- LOGGING ---
     let tx_log = tui_tx.clone();
@@ -567,10 +568,9 @@ pub async fn init(
     })?)?;
 
     // --- DB API ---
-    let db_table = lua.create_table()?;
     let db_conn_set = db.clone();
-    db_table.set(
-        "set",
+    navi.set(
+        "_db_set_raw",
         lua.create_function(move |_, (key, value): (String, String)| {
             let conn = db_conn_set.lock().unwrap();
             conn.execute(
@@ -583,8 +583,8 @@ pub async fn init(
     )?;
 
     let db_conn_get = db.clone();
-    db_table.set(
-        "get",
+    navi.set(
+        "_db_get_raw",
         lua.create_function(move |lua, key: String| {
             let conn = db_conn_get.lock().unwrap();
             let mut stmt = conn
@@ -601,7 +601,33 @@ pub async fn init(
             }
         })?,
     )?;
-    navi.set("db", db_table)?;
+
+    // 2. Build the Smart Lua Wrapper
+    lua.load(r#"
+        navi.db = {}
+        
+        function navi.db.set(key, value)
+            -- If the key doesn't have a colon, auto-namespace it!
+            if not string.find(key, ":") then
+                local info = debug.getinfo(2, "S")
+                local source = info and info.short_src or "unknown"
+                local plugin = string.match(source, "([^/\\]+)%.lua$") or "global"
+                key = plugin .. ":" .. key
+            end
+            navi._db_set_raw(key, tostring(value))
+        end
+
+        function navi.db.get(key)
+            -- If the key doesn't have a colon, auto-namespace it!
+            if not string.find(key, ":") then
+                local info = debug.getinfo(2, "S")
+                local source = info and info.short_src or "unknown"
+                local plugin = string.match(source, "([^/\\]+)%.lua$") or "global"
+                key = plugin .. ":" .. key
+            end
+            return navi._db_get_raw(key)
+        end
+    "#).exec()?;
 
     // --- REGISTRIES ---
     let listeners = lua.create_table()?;
@@ -651,8 +677,9 @@ pub async fn init(
         )?,
     )?;
 
-    // 3. FINISH SETUP
-    lua.globals().set("navi", navi)?;
+    // we do this higher up now to make the table
+    // available to the core API files that are loaded before the plugins, so they can also register commands and listeners
+    // lua.globals().set("navi", navi)?;
 
     // 4. LOAD CONDUCTOR 
     lua.load(
@@ -671,6 +698,8 @@ pub async fn init(
     // 5. LOAD PLUGINS
     let load_report = load_plugins(&lua);
     let _ = tui_tx.send(BotEvent::Log(load_report));
+
+    drop(navi); // <-- VERY IMPORTANT to drop this before we create the Data struct, otherwise we get a deadlock when trying to access it from the TUI!
 
     Ok(Data {
         lua: Arc::new(Mutex::new(lua)),

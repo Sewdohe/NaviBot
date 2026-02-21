@@ -14,10 +14,21 @@ navi.on("ticket_created", function(user_id)
     print("📈 Stats: Logged new ticket! Total: " .. tostring(current + 1))
 end)
 
+navi.on("message_sent", function(user_id)
+    local current = tonumber(navi.db.get("stats:total_messages")) or 0
+    navi.db.set("stats:total_messages", tostring(current + 1))
+end)
+
 -- 3. A command to view the stats!
 navi.create_slash("stats", "View bot and server statistics", {}, function(ctx)
     local joins = navi.db.get("stats:total_joins") or "0"
     local tickets = navi.db.get("stats:total_tickets") or "0"
+    local messages = navi.db.get("stats:total_messages") or "0" -- NEW!
 
-    ctx.reply("📊 **Server Stats**\n👥 Total Joins: `" .. joins .. "`\n🎫 Tickets Opened: `" .. tickets .. "`", false)
+    local output = "📊 **Server Stats**\n"
+    output = output .. "👥 Total Joins: `" .. joins .. "`\n"
+    output = output .. "🎫 Tickets Opened: `" .. tickets .. "`\n"
+    output = output .. "💬 Messages Sent: `" .. messages .. "`"
+
+    ctx.reply(output, false)
 end)

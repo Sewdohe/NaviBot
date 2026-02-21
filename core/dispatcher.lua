@@ -4,6 +4,10 @@ print("--- Loading Command Dispatcher ---")
 local PREFIX = "!"
 
 navi.register(function(msg)
+    if msg.author.bot then return end
+
+    navi.emit("message_sent", msg.author.id)
+
     -- 1. Check if it starts with the prefix
     if msg.content:sub(1, #PREFIX) ~= PREFIX then
         return -- Ignore normal chat

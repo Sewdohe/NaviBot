@@ -217,6 +217,26 @@ pub async fn event_handler(
         }
     }
 
+    // --- CACHE DISCORD DATA ---
+    if let serenity::FullEvent::GuildCreate { guild, is_new: _ } = event {
+        let mut state = data.discord_state.lock().unwrap();
+        state.channels.clear(); // Wipe old data just in case
+        
+        for (id, channel) in &guild.channels {
+            // We only want Text Channels for configs usually!
+            if channel.kind == serenity::ChannelType::Text {
+                state.channels.push((id.get().to_string(), channel.name.clone()));
+            }
+        }
+        
+        // Sort alphabetically so the TUI dropdown looks nice!
+        state.channels.sort_by(|a, b| a.1.cmp(&b.1));
+        
+        let _ = data.tui_tx.send(crate::types::BotEvent::Log(
+            format!("📡 Cached {} text channels from server.", state.channels.len())
+        ));
+    }
+
     // 5. COMPONENT INTERACTION (Buttons/Select Menus)
     if let serenity::FullEvent::InteractionCreate { interaction } = event {
         if let serenity::Interaction::Component(comp) = interaction {

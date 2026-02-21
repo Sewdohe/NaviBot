@@ -122,6 +122,7 @@ pub async fn init(
     ctx: &serenity::Context,
     tui_tx: UnboundedSender<BotEvent>,
     config_registry: ConfigRegistry,
+    discord_state: crate::types::SharedDiscordState,
 ) -> Result<Data, Error> {
     let _ = tui_tx.send(BotEvent::Log("--- Engine Initialization ---".into()));
 
@@ -378,6 +379,7 @@ pub async fn init(
             let field_type = match type_str.as_str() {
                 "number" => ConfigType::Number,
                 "boolean" => ConfigType::Boolean,
+                "channel" => ConfigType::Channel,
                 _ => ConfigType::String,
             };
 
@@ -538,5 +540,6 @@ pub async fn init(
         lua: Arc::new(Mutex::new(lua)),
         db,
         tui_tx,
+        discord_state,
     })
 }

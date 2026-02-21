@@ -1,4 +1,4 @@
-use crate::types::{AdminCommand, BotEvent, ConfigRegistry};
+use crate::types::{AdminCommand, BotEvent, ConfigRegistry, SharedDiscordState, ConfigType};
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
     execute,
@@ -9,7 +9,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Paragraph},
+    widgets::{Block, Borders, List, ListItem, Paragraph, Clear},
     Terminal,
 };
 use std::{io, time::Duration};
@@ -31,6 +31,7 @@ pub fn run(
     tx_to_bot: UnboundedSender<AdminCommand>,
     mut rx_from_bot: UnboundedReceiver<BotEvent>,
     config_registry: ConfigRegistry,
+    discord_state: SharedDiscordState
 ) -> Result<(), Box<dyn std::error::Error>> {
     
     // 1. SETUP TERMINAL
@@ -58,6 +59,10 @@ pub fn run(
     // Typing State
     let mut is_editing = false;
     let mut edit_buffer = String::new();
+
+    // DROPDOWN STATE 
+    let mut is_dropdown_open = false;
+    let mut dropdown_selected_index = 0;
 
     // 3. MAIN LOOP
     loop {
@@ -149,6 +154,7 @@ pub fn run(
                     .block(Block::default().title("🔌 Plugins (Up/Down) ").borders(Borders::ALL));
                 f.render_widget(list, chunks[0]);
 
+
                 // Right Pane: Config Fields
                 let active_plugin = &plugin_names[selected_plugin_index];
                 if let Some(schema) = registry.get(active_plugin) {
@@ -166,11 +172,10 @@ pub fn run(
                     }
 
                     for (i, field) in schema.fields.iter().enumerate() {
-                        // Highlight the name if this field is selected
                         let name_style = if config_pane == ConfigPane::FieldList && i == selected_field_index {
-                            Style::default().fg(Color::Black).bg(Color::Yellow) // Highlighted
+                            Style::default().fg(Color::Black).bg(Color::Yellow) 
                         } else {
-                            Style::default().fg(Color::Yellow) // Normal
+                            Style::default().fg(Color::Yellow)
                         };
                         
                         text.push(Line::from(Span::styled(&field.name, name_style)));
@@ -189,6 +194,9 @@ pub fn run(
                         text.push(Line::from("")); 
                     }
 
+                    text.push(Line::from(Span::styled("Press 'l' to return to logs.", Style::default().fg(Color::DarkGray))));
+
+                    // --- THIS IS WHERE `text` IS MOVED ---
                     let right_pane = Paragraph::new(text)
                         .block(Block::default()
                             .title(if config_pane == ConfigPane::FieldList { "⚙️ Settings (Editing)" } else { "⚙️ Settings" })
@@ -196,6 +204,44 @@ pub fn run(
                             .border_style(if config_pane == ConfigPane::FieldList { Style::default().fg(Color::Green) } else { Style::default() })
                         );
                     f.render_widget(right_pane, chunks[1]);
+
+                    // --- DROPDOWN POPUP OVERLAY ---
+                    if is_dropdown_open {
+                        // 1. Calculate a centered box inside the right pane
+                        let v_chunks = Layout::default()
+                            .direction(Direction::Vertical)
+                            .constraints([Constraint::Percentage(20), Constraint::Percentage(60), Constraint::Percentage(20)])
+                            .split(chunks[1]);
+                        let popup_area = Layout::default()
+                            .direction(Direction::Horizontal)
+                            .constraints([Constraint::Percentage(10), Constraint::Percentage(80), Constraint::Percentage(10)])
+                            .split(v_chunks[1])[1];
+
+                        // 2. Clear the background so text doesn't overlap
+                        f.render_widget(Clear, popup_area);
+
+                        // 3. Draw the list of channels
+                        let state = discord_state.lock().unwrap();
+                        
+                        // Prevent index out of bounds
+                        let safe_index = dropdown_selected_index.min(state.channels.len().saturating_sub(1));
+                        
+                        let items: Vec<ListItem> = state.channels.iter().enumerate().map(|(i, (id, name))| {
+                            if i == safe_index {
+                                ListItem::new(format!("> #{} ({})", name, id))
+                                    .style(Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD))
+                            } else {
+                                ListItem::new(format!("  #{}", name))
+                            }
+                        }).collect();
+
+                        let list = List::new(items)
+                            .block(Block::default()
+                                .title(" 📚 Select Discord Channel (Up/Down/Enter) ")
+                                .borders(Borders::ALL)
+                                .border_style(Style::default().fg(Color::Cyan)));
+                        f.render_widget(list, popup_area);
+                    }
                 }
             }
         })?;
@@ -217,49 +263,58 @@ pub fn run(
                     }
                 } else {
                     match key.code {
-                        // --- GLOBAL HOTKEYS (Guarded) ---
-                        KeyCode::Char('q') if !is_editing => {
+                        // --- GLOBAL HOTKEYS ---
+                        KeyCode::Char('q') if !is_editing && !is_dropdown_open => {
                             let _ = tx_to_bot.send(AdminCommand::Shutdown);
                             break; 
                         }
-                        KeyCode::Char('r') if !is_editing => {
+                        KeyCode::Char('r') if !is_editing && !is_dropdown_open => {
                             let _ = tx_to_bot.send(AdminCommand::Reload);
                         }
-                        KeyCode::Char('i') if !is_editing => {
+                        KeyCode::Char('i') if !is_editing && !is_dropdown_open => {
                             if mode == AppMode::Logs { input_mode = true; }
                         }
-                        KeyCode::Char('c') if !is_editing => mode = AppMode::Config,
-                        KeyCode::Char('l') if !is_editing => mode = AppMode::Logs,
-                        
+                        KeyCode::Char('c') if !is_editing && !is_dropdown_open => mode = AppMode::Config,
+                        KeyCode::Char('l') if !is_editing && !is_dropdown_open => mode = AppMode::Logs,
+
+                        // --- DROPDOWN NAVIGATION ---
+                        KeyCode::Up if is_dropdown_open => {
+                            dropdown_selected_index = dropdown_selected_index.saturating_sub(1);
+                        }
+                        KeyCode::Down if is_dropdown_open => {
+                            let max = discord_state.lock().unwrap().channels.len().saturating_sub(1);
+                            if dropdown_selected_index < max { dropdown_selected_index += 1; }
+                        }
+                        KeyCode::Esc if is_dropdown_open => {
+                            is_dropdown_open = false;
+                        }
+
                         // --- CONFIG DASHBOARD NAVIGATION ---
-                        KeyCode::Right | KeyCode::Enter if mode == AppMode::Config && config_pane == ConfigPane::PluginList => {
-                            // Jump to the right pane
+                        KeyCode::Right | KeyCode::Enter if mode == AppMode::Config && config_pane == ConfigPane::PluginList && !is_dropdown_open => {
                             config_pane = ConfigPane::FieldList;
                             selected_field_index = 0;
                         }
-                        KeyCode::Left | KeyCode::Esc if mode == AppMode::Config && config_pane == ConfigPane::FieldList && !is_editing => {
-                            // Jump back to the left pane
+                        KeyCode::Left | KeyCode::Esc if mode == AppMode::Config && config_pane == ConfigPane::FieldList && !is_editing && !is_dropdown_open => {
                             config_pane = ConfigPane::PluginList;
                         }
                         
-                        // Navigating the Left Pane (Plugins)
-                        KeyCode::Up if mode == AppMode::Config && config_pane == ConfigPane::PluginList => {
+                        // Navigating Left Pane
+                        KeyCode::Up if mode == AppMode::Config && config_pane == ConfigPane::PluginList && !is_dropdown_open => {
                             selected_plugin_index = selected_plugin_index.saturating_sub(1);
                         }
-                        KeyCode::Down if mode == AppMode::Config && config_pane == ConfigPane::PluginList => {
+                        KeyCode::Down if mode == AppMode::Config && config_pane == ConfigPane::PluginList && !is_dropdown_open => {
                             let max = config_registry.lock().unwrap().len().saturating_sub(1);
                             if selected_plugin_index < max { selected_plugin_index += 1; }
                         }
 
-                        // Navigating the Right Pane (Fields)
-                        KeyCode::Up if mode == AppMode::Config && config_pane == ConfigPane::FieldList && !is_editing => {
+                        // Navigating Right Pane
+                        KeyCode::Up if mode == AppMode::Config && config_pane == ConfigPane::FieldList && !is_editing && !is_dropdown_open => {
                             selected_field_index = selected_field_index.saturating_sub(1);
                         }
-                        KeyCode::Down if mode == AppMode::Config && config_pane == ConfigPane::FieldList && !is_editing => {
+                        KeyCode::Down if mode == AppMode::Config && config_pane == ConfigPane::FieldList && !is_editing && !is_dropdown_open => {
                             let registry = config_registry.lock().unwrap();
                             let mut names: Vec<String> = registry.keys().cloned().collect();
                             names.sort();
-                            
                             if let Some(name) = names.get(selected_plugin_index) {
                                 if let Some(schema) = registry.get(name) {
                                     let max = schema.fields.len().saturating_sub(1);
@@ -268,14 +323,34 @@ pub fn run(
                             }
                         }
 
-                        // --- EDITING A FIELD ---
+                        // --- EDITING A FIELD OR SELECTING DROPDOWN ---
                         KeyCode::Enter if mode == AppMode::Config && config_pane == ConfigPane::FieldList => {
-                            if is_editing {
-                                // 1. SAVE THE DATA
+                            if is_dropdown_open {
+                                // 1. Save Dropdown Selection
+                                let state = discord_state.lock().unwrap();
+                                if let Some((id, _name)) = state.channels.get(dropdown_selected_index) {
+                                    let registry = config_registry.lock().unwrap();
+                                    let mut names: Vec<String> = registry.keys().cloned().collect();
+                                    names.sort();
+                                    if let Some(plugin_name) = names.get(selected_plugin_index) {
+                                        if let Some(schema) = registry.get(plugin_name) {
+                                            if let Some(field) = schema.fields.get(selected_field_index) {
+                                                let _ = tx_to_bot.send(AdminCommand::SaveConfig {
+                                                    plugin: plugin_name.clone(),
+                                                    key: field.key.clone(),
+                                                    value: id.clone(),
+                                                });
+                                            }
+                                        }
+                                    }
+                                }
+                                is_dropdown_open = false;
+                            } 
+                            else if is_editing {
+                                // 2. Save Text Box
                                 let registry = config_registry.lock().unwrap();
                                 let mut names: Vec<String> = registry.keys().cloned().collect();
                                 names.sort();
-                                
                                 if let Some(plugin_name) = names.get(selected_plugin_index) {
                                     if let Some(schema) = registry.get(plugin_name) {
                                         if let Some(field) = schema.fields.get(selected_field_index) {
@@ -287,34 +362,38 @@ pub fn run(
                                         }
                                     }
                                 }
-
-                                // 2. CLOSE EDITOR
                                 is_editing = false;
                                 edit_buffer.clear();
-                            } else {
-                                // OPEN EDITOR
-                                is_editing = true;
+                            } 
+                            else {
+                                // 3. Open Editor or Dropdown
                                 let registry = config_registry.lock().unwrap();
                                 let mut names: Vec<String> = registry.keys().cloned().collect();
                                 names.sort();
-                                
                                 if let Some(plugin_name) = names.get(selected_plugin_index) {
                                     if let Some(schema) = registry.get(plugin_name) {
                                         if let Some(field) = schema.fields.get(selected_field_index) {
-                                            edit_buffer = field.default_value.clone();
+                                            if field.field_type == ConfigType::Channel {
+                                                is_dropdown_open = true;
+                                                dropdown_selected_index = 0;
+                                            } else {
+                                                is_editing = true;
+                                                edit_buffer = field.default_value.clone();
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
                         
-                        // Typing inside the box
+                        // --- TYPING INSIDE THE TEXT BOX ---
                         KeyCode::Esc if is_editing => {
                             is_editing = false;
                             edit_buffer.clear();
                         }
                         KeyCode::Backspace if is_editing => { edit_buffer.pop(); }
                         KeyCode::Char(c) if is_editing => { edit_buffer.push(c); }
+                        
                         _ => {}
                     }
                 }

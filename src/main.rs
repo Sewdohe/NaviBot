@@ -31,6 +31,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let registry_for_tui = config_registry.clone();
     let registry_for_loop = config_registry.clone();
 
+    // Discord state shared across the bot and TUI (e.g. channel list)
+    let discord_state: types::SharedDiscordState = Arc::new(Mutex::new(types::DiscordState::default()));
+    let state_for_engine = discord_state.clone();
+    let state_for_tui = discord_state.clone();
+
     // 2. SPAWN BOT THREAD
     std::thread::spawn(move || {
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -65,7 +70,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         // Error Handling Wrapper
                         // let data_result = engine::init(ctx, tx_for_engine.clone()).await;
                         let data_result =
-                            engine::init(ctx, tx_for_engine.clone(), registry_for_engine).await;
+                            engine::init(ctx, tx_for_engine.clone(), registry_for_engine, state_for_engine).await;
 
                         match data_result {
                             Ok(data) => {
@@ -167,7 +172,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 4. RUN TUI (Main Thread)
     // This must be OUTSIDE the spawn block
     // tui::run(tx_to_bot, rx_from_tui)?;
-    tui::run(tx_to_bot, rx_from_tui, registry_for_tui)?;
+    tui::run(tx_to_bot, rx_from_tui, registry_for_tui, state_for_tui)?;
 
     Ok(())
 }

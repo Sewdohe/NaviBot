@@ -38,6 +38,7 @@ pub struct Data {
     pub lua: Arc<Mutex<Lua>>,
     pub db: Arc<Mutex<Connection>>,
     pub tui_tx: UnboundedSender<BotEvent>,
+    pub discord_state: SharedDiscordState,
 }
 
 // Configuration Types
@@ -46,6 +47,14 @@ pub enum ConfigType {
     String,
     Number,
     Boolean,
+    Channel,
+}
+
+pub type SharedDiscordState = Arc<Mutex<DiscordState>>;
+
+#[derive(Clone, Debug, Default)]
+pub struct DiscordState {
+    pub channels: Vec<(String, String)>, // Stores (Channel_ID, Channel_Name)
 }
 
 // A single setting for a plugin

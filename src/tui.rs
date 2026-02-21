@@ -207,7 +207,6 @@ pub fn run(
 
                     // --- DROPDOWN POPUP OVERLAY ---
                     if is_dropdown_open {
-                        // 1. Calculate a centered box inside the right pane
                         let v_chunks = Layout::default()
                             .direction(Direction::Vertical)
                             .constraints([Constraint::Percentage(20), Constraint::Percentage(60), Constraint::Percentage(20)])
@@ -217,27 +216,51 @@ pub fn run(
                             .constraints([Constraint::Percentage(10), Constraint::Percentage(80), Constraint::Percentage(10)])
                             .split(v_chunks[1])[1];
 
-                        // 2. Clear the background so text doesn't overlap
                         f.render_widget(Clear, popup_area);
 
-                        // 3. Draw the list of channels
                         let state = discord_state.lock().unwrap();
-                        
-                        // Prevent index out of bounds
-                        let safe_index = dropdown_selected_index.min(state.channels.len().saturating_sub(1));
-                        
-                        let items: Vec<ListItem> = state.channels.iter().enumerate().map(|(i, (id, name))| {
-                            if i == safe_index {
-                                ListItem::new(format!("> #{} ({})", name, id))
-                                    .style(Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD))
-                            } else {
-                                ListItem::new(format!("  #{}", name))
-                            }
-                        }).collect();
+                        let active_field_type = schema.fields[selected_field_index].field_type.clone();
+
+                        let (list_title, list_len) = match active_field_type {
+                            ConfigType::Channel => (" 📚 Select Channel ", state.channels.len()),
+                            ConfigType::Category => (" 📁 Select Category ", state.categories.len()),
+                            ConfigType::Role => (" 🎭 Select Role ", state.roles.len()),
+                            _ => (" Select ", 0),
+                        };
+
+                        let safe_index = dropdown_selected_index.min(list_len.saturating_sub(1));
+
+                        // Dynamically build the list based on the field type!
+                        let items: Vec<ListItem> = match active_field_type {
+                            ConfigType::Channel => state.channels.iter().enumerate().map(|(i, (id, name))| {
+                                if i == safe_index {
+                                    ListItem::new(format!("> #{} ({})", name, id)).style(Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD))
+                                } else { ListItem::new(format!("  #{}", name)) }
+                            }).collect(),
+                            ConfigType::Category => state.categories.iter().enumerate().map(|(i, (id, name))| {
+                                if i == safe_index {
+                                    ListItem::new(format!("> 📁 {} ({})", name, id)).style(Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD))
+                                } else { ListItem::new(format!("  📁 {}", name)) }
+                            }).collect(),
+                            ConfigType::Role => state.roles.iter().enumerate().map(|(i, role)| {
+                                // TRUE RGB COLORS FROM DISCORD!
+                                // Default role color is (0,0,0), make it white so it doesn't vanish on black terminals
+                                let display_color = if role.color == (0, 0, 0) { Color::White } else { Color::Rgb(role.color.0, role.color.1, role.color.2) };
+                                
+                                let mut style = Style::default().fg(display_color);
+                                if i == safe_index {
+                                    style = style.bg(Color::DarkGray).add_modifier(Modifier::BOLD);
+                                    ListItem::new(format!("> @{} ({})", role.name, role.id)).style(style)
+                                } else {
+                                    ListItem::new(format!("  @{}", role.name)).style(style)
+                                }
+                            }).collect(),
+                            _ => vec![],
+                        };
 
                         let list = List::new(items)
                             .block(Block::default()
-                                .title(" 📚 Select Discord Channel (Up/Down/Enter) ")
+                                .title(format!("{} (Up/Down/Enter) ", list_title))
                                 .borders(Borders::ALL)
                                 .border_style(Style::default().fg(Color::Cyan)));
                         f.render_widget(list, popup_area);
@@ -282,7 +305,24 @@ pub fn run(
                             dropdown_selected_index = dropdown_selected_index.saturating_sub(1);
                         }
                         KeyCode::Down if is_dropdown_open => {
-                            let max = discord_state.lock().unwrap().channels.len().saturating_sub(1);
+                            let max = {
+                                let registry = config_registry.lock().unwrap();
+                                let mut names: Vec<String> = registry.keys().cloned().collect();
+                                names.sort();
+                                let f_type = names.get(selected_plugin_index)
+                                    .and_then(|n| registry.get(n))
+                                    .and_then(|s| s.fields.get(selected_field_index))
+                                    .map(|f| f.field_type.clone())
+                                    .unwrap_or(ConfigType::String);
+                                    
+                                let state = discord_state.lock().unwrap();
+                                match f_type {
+                                    ConfigType::Channel => state.channels.len(),
+                                    ConfigType::Category => state.categories.len(),
+                                    ConfigType::Role => state.roles.len(),
+                                    _ => 0
+                                }.saturating_sub(1)
+                            };
                             if dropdown_selected_index < max { dropdown_selected_index += 1; }
                         }
                         KeyCode::Esc if is_dropdown_open => {
@@ -326,19 +366,32 @@ pub fn run(
                         // --- EDITING A FIELD OR SELECTING DROPDOWN ---
                         KeyCode::Enter if mode == AppMode::Config && config_pane == ConfigPane::FieldList => {
                             if is_dropdown_open {
-                                // 1. Save Dropdown Selection
-                                let state = discord_state.lock().unwrap();
-                                if let Some((id, _name)) = state.channels.get(dropdown_selected_index) {
-                                    let registry = config_registry.lock().unwrap();
-                                    let mut names: Vec<String> = registry.keys().cloned().collect();
-                                    names.sort();
-                                    if let Some(plugin_name) = names.get(selected_plugin_index) {
-                                        if let Some(schema) = registry.get(plugin_name) {
-                                            if let Some(field) = schema.fields.get(selected_field_index) {
+                                // 1. Save Dropdown Selection (Optimistic UI Update)
+                                let mut registry = config_registry.lock().unwrap();
+                                let mut names: Vec<String> = registry.keys().cloned().collect();
+                                names.sort();
+                                
+                                if let Some(plugin_name) = names.get(selected_plugin_index).cloned() {
+                                    if let Some(schema) = registry.get_mut(&plugin_name) {
+                                        if let Some(field) = schema.fields.get_mut(selected_field_index) {
+                                            
+                                            let mut selected_id = None;
+                                            let state = discord_state.lock().unwrap();
+                                            match field.field_type {
+                                                ConfigType::Channel => { if let Some((id, _)) = state.channels.get(dropdown_selected_index) { selected_id = Some(id.clone()); } },
+                                                ConfigType::Category => { if let Some((id, _)) = state.categories.get(dropdown_selected_index) { selected_id = Some(id.clone()); } },
+                                                ConfigType::Role => { if let Some(role) = state.roles.get(dropdown_selected_index) { selected_id = Some(role.id.clone()); } },
+                                                _ => {}
+                                            }
+
+                                            if let Some(id) = selected_id {
+                                                // INSTANT VISUAL UPDATE
+                                                field.default_value = id.clone(); 
+                                                
                                                 let _ = tx_to_bot.send(AdminCommand::SaveConfig {
                                                     plugin: plugin_name.clone(),
                                                     key: field.key.clone(),
-                                                    value: id.clone(),
+                                                    value: id,
                                                 });
                                             }
                                         }
@@ -347,13 +400,18 @@ pub fn run(
                                 is_dropdown_open = false;
                             } 
                             else if is_editing {
-                                // 2. Save Text Box
-                                let registry = config_registry.lock().unwrap();
+                                // 2. Save Text Box (Optimistic UI Update)
+                                let mut registry = config_registry.lock().unwrap();
                                 let mut names: Vec<String> = registry.keys().cloned().collect();
                                 names.sort();
-                                if let Some(plugin_name) = names.get(selected_plugin_index) {
-                                    if let Some(schema) = registry.get(plugin_name) {
-                                        if let Some(field) = schema.fields.get(selected_field_index) {
+                                
+                                if let Some(plugin_name) = names.get(selected_plugin_index).cloned() {
+                                    if let Some(schema) = registry.get_mut(&plugin_name) {
+                                        if let Some(field) = schema.fields.get_mut(selected_field_index) {
+                                            
+                                            // INSTANT VISUAL UPDATE
+                                            field.default_value = edit_buffer.clone(); 
+                                            
                                             let _ = tx_to_bot.send(AdminCommand::SaveConfig {
                                                 plugin: plugin_name.clone(),
                                                 key: field.key.clone(),
@@ -373,7 +431,7 @@ pub fn run(
                                 if let Some(plugin_name) = names.get(selected_plugin_index) {
                                     if let Some(schema) = registry.get(plugin_name) {
                                         if let Some(field) = schema.fields.get(selected_field_index) {
-                                            if field.field_type == ConfigType::Channel {
+                                            if field.field_type == ConfigType::Channel || field.field_type == ConfigType::Role || field.field_type == ConfigType::Category {
                                                 is_dropdown_open = true;
                                                 dropdown_selected_index = 0;
                                             } else {

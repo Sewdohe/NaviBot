@@ -48,6 +48,15 @@ pub enum ConfigType {
     Number,
     Boolean,
     Channel,
+    Role,
+    Category,
+}
+
+#[derive(Clone, Debug)]
+pub struct DiscordRole {
+    pub id: String,
+    pub name: String,
+    pub color: (u8, u8, u8), // (R, G, B) tuple for Ratatui
 }
 
 pub type SharedDiscordState = Arc<Mutex<DiscordState>>;
@@ -55,6 +64,8 @@ pub type SharedDiscordState = Arc<Mutex<DiscordState>>;
 #[derive(Clone, Debug, Default)]
 pub struct DiscordState {
     pub channels: Vec<(String, String)>, // Stores (Channel_ID, Channel_Name)
+    pub categories: Vec<(String, String)>,
+    pub roles: Vec<DiscordRole>,
 }
 
 // A single setting for a plugin

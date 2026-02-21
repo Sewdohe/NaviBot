@@ -53,7 +53,7 @@ pub async fn event_handler(
                 msg_table.set("attachments", attachments)?;
 
                 if let Err(e) = f.call::<_, ()>(msg_table) {
-                    println!("❌ Lua Error: {}", e);
+                    let _ = data.tui_tx.send(crate::types::BotEvent::Log(format!("❌ Lua Error: {}", e)));
                 }
             }
         }
@@ -71,7 +71,6 @@ pub async fn event_handler(
             // --- STEP A: PREPARE DATA ---
 
             // 1. Define a temporary container for our types
-            // This holds the data SAFELY before we lock Lua.
             enum ArgValue {
                 String(String),
                 Integer(i64),
@@ -86,14 +85,11 @@ pub async fn event_handler(
                 let name = option.name.clone();
 
                 let value = match &option.value {
-                    // Map Discord types to our Rust Container
                     serenity::CommandDataOptionValue::String(s) => ArgValue::String(s.clone()),
                     serenity::CommandDataOptionValue::Integer(i) => ArgValue::Integer(*i),
                     serenity::CommandDataOptionValue::Boolean(b) => ArgValue::Boolean(*b),
                     serenity::CommandDataOptionValue::Number(n) => ArgValue::Number(*n),
 
-                    // IDs (User/Role/Channel) are best sent as Strings to Lua
-                    // (Lua numbers lose precision on huge 64-bit IDs)
                     serenity::CommandDataOptionValue::User(u) => ArgValue::String(u.to_string()),
                     serenity::CommandDataOptionValue::Channel(c) => ArgValue::String(c.to_string()),
                     serenity::CommandDataOptionValue::Role(r) => ArgValue::String(r.to_string()),
@@ -107,12 +103,14 @@ pub async fn event_handler(
             let http = ctx.http.clone();
             let interaction_id = command.id;
             let interaction_token = command.token.clone();
+            
+            // CLONE THE TX FOR THE ASYNC REPLY BLOCK
+            let tx_reply = data.tui_tx.clone();
 
             // --- STEP B: LOCK LUA ---
             {
                 let lua = data.lua.lock().unwrap();
 
-                // (Standard Callback Fetching...)
                 let callback: Option<Function> = (|| {
                     let globals = lua.globals();
                     let navi: Table = globals.get("navi").ok()?;
@@ -132,7 +130,6 @@ pub async fn event_handler(
                         let args_table = lua.create_table()?;
                         for (k, v) in args_map {
                             match v {
-                                // Lua can handle these types natively now!
                                 ArgValue::String(s) => args_table.set(k, s)?,
                                 ArgValue::Integer(i) => args_table.set(k, i)?,
                                 ArgValue::Boolean(b) => args_table.set(k, b)?,
@@ -141,11 +138,11 @@ pub async fn event_handler(
                         }
                         ctx_table.set("args", args_table)?;
 
-                        // (Standard Reply Function...)
                         let reply_fn = lua.create_function(move |_, msg: String| {
                             let http = http.clone();
                             let token = interaction_token.clone();
                             let id = interaction_id;
+                            let tx = tx_reply.clone();
                             tokio::spawn(async move {
                                 let response = serenity::CreateInteractionResponse::Message(
                                     serenity::CreateInteractionResponseMessage::new().content(msg),
@@ -154,7 +151,7 @@ pub async fn event_handler(
                                     .create_interaction_response(id, &token, &response, vec![])
                                     .await
                                 {
-                                    println!("Error replying: {}", e);
+                                    let _ = tx.send(crate::types::BotEvent::Log(format!("Error replying: {}", e)));
                                 }
                             });
                             Ok(())
@@ -163,7 +160,7 @@ pub async fn event_handler(
                         if let Ok(reply) = reply_fn {
                             let _ = ctx_table.set("reply", reply);
                             if let Err(e) = func.call::<_, ()>(ctx_table) {
-                                println!("❌ Lua Slash Error: {}", e);
+                                let _ = data.tui_tx.send(crate::types::BotEvent::Log(format!("❌ Lua Slash Error: {}", e)));
                             }
                         }
                     }
@@ -172,13 +169,11 @@ pub async fn event_handler(
         }
     }
 
-// 3. REACTION ADD HANDLER
+    // 3. REACTION ADD HANDLER
     if let serenity::FullEvent::ReactionAdd { add_reaction } = event {
-        // OPEN SCOPE: Start the lock lifetime here
         { 
             let ctx_lua = data.lua.lock().unwrap();
             
-            // Try to get the function
             if let Ok(callback) = ctx_lua.globals().get::<_, mlua::Function>("on_reaction_add") {
                 if let Ok(table) = ctx_lua.create_table() {
                     let _ = table.set("user_id", add_reaction.user_id.map(|u| u.get().to_string()));
@@ -188,12 +183,11 @@ pub async fn event_handler(
                     let _ = table.set("emoji", add_reaction.emoji.to_string());
                     
                     if let Err(e) = callback.call::<_, ()>(table) {
-                        println!("❌ Lua Reaction Error: {}", e);
+                        let _ = data.tui_tx.send(crate::types::BotEvent::Log(format!("❌ Lua Reaction Error: {}", e)));
                     }
                 }
             };
         } 
-        // CLOSE SCOPE: Lock is dropped here, guaranteed safe.
     }
 
     // 4. REACTION REMOVE HANDLER
@@ -210,30 +204,57 @@ pub async fn event_handler(
                     let _ = table.set("emoji", removed_reaction.emoji.to_string());
 
                     if let Err(e) = callback.call::<_, ()>(table) {
-                        println!("❌ Lua Reaction Error: {}", e);
+                        let _ = data.tui_tx.send(crate::types::BotEvent::Log(format!("❌ Lua Reaction Error: {}", e)));
                     }
                 }
             };
         }
     }
 
+    // Member join events
+    if let serenity::FullEvent::GuildMemberAddition { new_member } = event {
+        let _ = data.tui_tx.send(crate::types::BotEvent::UserJoined(new_member.user.name.clone()));
+        
+        let lua = data.lua.lock().unwrap();
+        if let Ok(func) = lua.globals().get::<_, mlua::Function>("on_member_join") {
+            let _ = func.call::<_, ()>((
+                new_member.user.id.get().to_string(), 
+                new_member.user.name.clone()
+            ));
+        };
+    }
+
     // --- CACHE DISCORD DATA ---
     if let serenity::FullEvent::GuildCreate { guild, is_new: _ } = event {
         let mut state = data.discord_state.lock().unwrap();
-        state.channels.clear(); // Wipe old data just in case
+        state.channels.clear();
+        state.categories.clear();
+        state.roles.clear();
         
         for (id, channel) in &guild.channels {
-            // We only want Text Channels for configs usually!
             if channel.kind == serenity::ChannelType::Text {
                 state.channels.push((id.get().to_string(), channel.name.clone()));
+            } else if channel.kind == serenity::ChannelType::Category {
+                state.categories.push((id.get().to_string(), channel.name.clone()));
             }
         }
         
-        // Sort alphabetically so the TUI dropdown looks nice!
+        for (id, role) in &guild.roles {
+            let (r, g, b) = role.colour.tuple();
+            state.roles.push(crate::types::DiscordRole {
+                id: id.get().to_string(),
+                name: role.name.clone(),
+                color: (r, g, b),
+            });
+        }
+        
         state.channels.sort_by(|a, b| a.1.cmp(&b.1));
+        state.categories.sort_by(|a, b| a.1.cmp(&b.1));
+        state.roles.sort_by(|a, b| a.name.cmp(&b.name));
         
         let _ = data.tui_tx.send(crate::types::BotEvent::Log(
-            format!("📡 Cached {} text channels from server.", state.channels.len())
+            format!("📡 Cached {} channels, {} categories, {} roles.", 
+                state.channels.len(), state.categories.len(), state.roles.len())
         ));
     }
 
@@ -243,32 +264,35 @@ pub async fn event_handler(
             let user_id = comp.user.id.get().to_string();
             let custom_id = comp.data.custom_id.clone();
             let channel_id = comp.channel_id.get().to_string();
+            let guild_id = comp.guild_id.map(|g| g.get().to_string());
 
-            // Extract values (for Select Menus)
             let values: Vec<String> = match &comp.data.kind {
                 serenity::ComponentInteractionDataKind::StringSelect { values } => values.clone(),
                 _ => Vec::new(),
             };
 
-            { // Scope for Lua Lock
+            { 
                 let ctx_lua = data.lua.lock().unwrap();
                 
-                // We look for a global function 'on_component'
                 if let Ok(callback) = ctx_lua.globals().get::<_, mlua::Function>("on_component") {
                     if let Ok(table) = ctx_lua.create_table() {
                         let _ = table.set("custom_id", custom_id);
                         let _ = table.set("user_id", user_id);
                         let _ = table.set("channel_id", channel_id);
                         let _ = table.set("values", values);
+                        let _ = table.set("guild_id", guild_id);
 
-                        // Helper: Reply (Ephemeral or Public)
                         let http = ctx.http.clone();
                         let interaction_id = comp.id;
                         let token = comp.token.clone();
                         
+                        // CLONE THE TX FOR THE ASYNC REPLY BLOCK
+                        let tx_reply = data.tui_tx.clone();
+                        
                         table.set("reply", ctx_lua.create_function(move |_, (msg, ephemeral): (String, bool)| {
                             let h = http.clone();
                             let t = token.clone();
+                            let tx = tx_reply.clone();
                             tokio::spawn(async move {
                                 let data = serenity::CreateInteractionResponseMessage::new()
                                     .content(msg)
@@ -276,15 +300,14 @@ pub async fn event_handler(
                                 let resp = serenity::CreateInteractionResponse::Message(data);
                                 
                                 if let Err(e) = h.create_interaction_response(interaction_id, &t, &resp, vec![]).await {
-                                    println!("Error replying to component: {}", e);
+                                    let _ = tx.send(crate::types::BotEvent::Log(format!("Error replying to component: {}", e)));
                                 }
                             });
                             Ok(())
                         })?)?;
 
-                        // Fire the event
                         if let Err(e) = callback.call::<_, ()>(table) {
-                            println!("❌ Lua Component Error: {}", e);
+                            let _ = data.tui_tx.send(crate::types::BotEvent::Log(format!("❌ Lua Component Error: {}", e)));
                         }
                     }
                 };

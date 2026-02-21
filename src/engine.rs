@@ -380,6 +380,8 @@ pub async fn init(
                 "number" => ConfigType::Number,
                 "boolean" => ConfigType::Boolean,
                 "channel" => ConfigType::Channel,
+                "role" => ConfigType::Role,
+                "category" => ConfigType::Category,
                 _ => ConfigType::String,
             };
 

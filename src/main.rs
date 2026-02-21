@@ -46,7 +46,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         rt.block_on(async move {
             let token = std::env::var("DISCORD_TOKEN").expect("missing DISCORD_TOKEN");
             let intents = serenity::GatewayIntents::non_privileged()
-                | serenity::GatewayIntents::MESSAGE_CONTENT;
+                | serenity::GatewayIntents::MESSAGE_CONTENT
+                | serenity::GatewayIntents::GUILD_MEMBERS;
 
             let framework = poise::Framework::builder()
                 .options(poise::FrameworkOptions {

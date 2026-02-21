@@ -93,3 +93,11 @@ To get full autocomplete, hover documentation, and type-checking in your editor 
 ## 📜 Documentation
 
 [Click here to view the Wiki Page](https://www.divnectar.com/docs/navibot-plugin-development-guide/)
+
+## Planned Features
+
+- [ ] Implement lists of nested objects as config option and TUI to support it
+- [ ] Add more Discord features to the engine
+- [ ] Bolster the amount of built-in core plugins
+- [ ] Implement handling modal forms
+- [ ] Implement ability for lua code to expose custom TUI functionality

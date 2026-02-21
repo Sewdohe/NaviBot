@@ -1,6 +1,6 @@
 # 🤖 Navi Engine
 
-[Navibot Preview](navibot-preview.png)
+<img width="1453" height="846" alt="navibot-preview" src="https://github.com/user-attachments/assets/fd76f1d2-ee86-43ae-9ced-40c8718b4ce8" />
 
 Navi Engine is a high-performance, enterprise-grade Discord bot framework. It pairs a lightning-fast Rust core with a hot-reloadable Lua plugin system and a built-in Terminal UI (TUI) dashboard. 
 

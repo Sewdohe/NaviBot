@@ -23,3 +23,14 @@ navi.emit = function(event_name, data)
         end
     end
 end
+
+-- Rust calls this global function when a user joins
+function on_member_join(user_id, username, guild_id)
+    -- Package the data into a clean table and broadcast it to all plugins
+    navi.emit("member_join", {
+        user_id = user_id,
+        username = username,
+        guild_id = guild_id
+    })
+end
+

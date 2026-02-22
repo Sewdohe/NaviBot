@@ -222,7 +222,8 @@ pub async fn event_handler(
             // Check for errors instead of ignoring them!
             if let Err(e) = func.call::<_, ()>((
                 new_member.user.id.get().to_string(), 
-                new_member.user.name.clone()
+                new_member.user.name.clone(),
+                new_member.guild_id.get().to_string()
             )) {
                 // Send the exact Lua crash log to the TUI so we can debug it
                 let _ = data.tui_tx.send(crate::types::BotEvent::Log(

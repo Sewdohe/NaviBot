@@ -11,7 +11,9 @@ navi.register_config("greeter", {
 })
 
 -- 2. The Logic (Called by Rust when someone joins)
-function on_member_join(user_id, username)
+navi.on("member_join", function(data)
+    local user_id = data.user_id
+    local username = data.username
     -- emit an event for new member joining.
     navi.emit("new_member_joined", username)
 
@@ -45,4 +47,4 @@ function on_member_join(user_id, username)
         -- navi.say expects a number for the channel_id, so we convert it
         navi.say(tonumber(channel_id), formatted_msg)
     end
-end
+end)

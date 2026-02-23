@@ -4,32 +4,36 @@
 -- 📦 NAVI ENGINE DATA TYPES
 -------------------------------------------------------------------------------
 
+---@class NaviAuthor
+---@field id number|string @The user's ID
+---@field name string @The user's display name
+---@field bot boolean|nil @True if the user is a bot
+---@field avatar string|nil @The user's avatar hash
+
 ---@class NaviMsg
 ---@field content string
 ---@field channel_id number|string
----@field message_id number|string
----@field author string @The username
----@field author_id number|string
----@field author_avatar string
----@field mentions table[] @Array of {name: string, id: number, avatar: string}
----@field attachments string[] @Array of URLs
+---@field id number|string @The message ID from Serenity
+---@field author NaviAuthor @The nested Serenity user object
+---@field mentions table[] @Array of mentioned users
+---@field attachments table[] @Array of attachment objects
 
 ---@class NaviSlashCtx
----@field user_id string 
----@field username string 
----@field channel_id string 
+---@field user_id string
+---@field username string
+---@field channel_id string
 ---@field guild_id string|nil
----@field args table<string, string|number|boolean> @The options passed to the slash command
----@field reply fun(message: string) @Replies directly to the interaction
+---@field options table<string, string|number|boolean> @The options passed to the slash command
+---@field reply fun(message: string, ephemeral: boolean|nil) @Replies directly to the interaction
 
 ---@class NaviComponentCtx
 ---@field custom_id string @The ID of the clicked button or dropdown
----@field user_id string 
----@field username string 
----@field channel_id string 
+---@field user_id string
+---@field username string
+---@field channel_id string
 ---@field guild_id string|nil
 ---@field values string[] @An array of selected values (only populated for dropdowns)
----@field reply fun(message: string, ephemeral: boolean) @Replies directly to the interaction
+---@field reply fun(message: string, ephemeral: boolean|nil) @Replies directly to the interaction
 
 ---@class NaviReactionCtx
 ---@field user_id string|nil
@@ -73,6 +77,15 @@
 ---@field set fun(key: string, value: string) @Saves a string to the SQLite database
 ---@field get_list fun(key: string): string[] @Fetches a comma-separated string and returns a Lua table array
 
+---@class NaviDBRow
+---@field key string
+---@field value string
+
+---@class NaviDB
+---@field get fun(key: string): string|nil
+---@field set fun(key: string, value: string)
+---@field query fun(sql: string): NaviDBRow[] @Executes raw SQL and returns an array of rows
+
 -------------------------------------------------------------------------------
 -- 🚀 THE GLOBAL NAVI API
 -------------------------------------------------------------------------------
@@ -97,3 +110,4 @@
 
 ---@type NaviCore
 navi = {}
+

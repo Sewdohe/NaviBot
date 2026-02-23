@@ -32,7 +32,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let registry_for_loop = config_registry.clone();
 
     // Discord state shared across the bot and TUI (e.g. channel list)
-    let discord_state: types::SharedDiscordState = Arc::new(Mutex::new(types::DiscordState::default()));
+    let discord_state: types::SharedDiscordState =
+        Arc::new(Mutex::new(types::DiscordState::default()));
     let state_for_engine = discord_state.clone();
     let state_for_tui = discord_state.clone();
 
@@ -68,21 +69,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                         let tx_for_engine = tx_for_setup.clone();
 
-                        // Error Handling Wrapper
-                        // let data_result = engine::init(ctx, tx_for_engine.clone()).await;
-                        let data_result =
-                            engine::init(ctx, tx_for_engine.clone(), registry_for_engine, state_for_engine).await;
+                        let data_result = engine::init(
+                            ctx,
+                            tx_for_engine.clone(),
+                            registry_for_engine,
+                            state_for_engine,
+                        )
+                        .await;
 
                         match data_result {
                             Ok(data) => {
-                                // --- FIX: SCOPED LOCK FOR SYNC ---
-                                // 1. Read commands (Lock Lua, Read, Drop Lock)
                                 let commands_result = {
                                     let lua = data.lua.lock().unwrap();
                                     engine::read_slash_commands(&lua)
-                                }; // <--- Lock is dropped here
+                                }; 
 
-                                // 2. Upload commands (Async, no lock held)
                                 let sync_report = match commands_result {
                                     Ok(cmds) => engine::upload_slash_commands(&ctx.http, cmds)
                                         .await
@@ -91,8 +92,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 };
 
                                 let _ = tx_for_setup.send(BotEvent::Log(sync_report));
-                                let _ =
-                                    tx_for_setup.send(BotEvent::Log("✅ Bot is Online!".into()));
+                                let _ = tx_for_setup.send(BotEvent::Log("✅ Bot is Online!".into()));
 
                                 // Send the Lua instance to the Admin Loop
                                 let _ = init_tx.send(data.lua.clone());
@@ -115,6 +115,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .unwrap();
 
             let shard_manager = client.shard_manager.clone();
+            
+            // --- THE FIX IS HERE ---
+            // We grab a clone of the HTTP client immediately after the client is built
+            let http_for_loop = client.http.clone();
 
             tokio::spawn(async move {
                 if let Err(why) = client.start().await {
@@ -123,7 +127,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             });
 
             // 3. ADMIN LOOP
-            // Wait for Lua to arrive before processing commands
             if let Some(lua_instance) = init_rx.recv().await {
                 while let Some(cmd) = rx_from_tui_cmd.recv().await {
                     match cmd {
@@ -139,26 +142,97 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             };
                             let _ = tx_for_loop.send(BotEvent::Log(report));
                         }
+                        AdminCommand::RefreshCache => {
+                            // Print the loading message
+                            let _ = tx_for_loop.send(BotEvent::Log("🔄 Fetching latest roles and channels...".into()));
+
+                            // Pass our cloned HTTP client directly into the thread
+                            let http_clone = http_for_loop.clone(); 
+                            let state_clone = discord_state.clone();
+                            let tx = tx_for_loop.clone();
+
+                            tokio::spawn(async move {
+                                use poise::serenity_prelude as serenity;
+                                
+                                if let Ok(guilds) = http_clone.get_guilds(None, None).await {
+                                    let mut new_channels: Vec<(String, String)> = Vec::new();
+                                    let mut new_categories: Vec<(String, String)> = Vec::new();
+                                    let mut new_roles: Vec<crate::types::DiscordRole> = Vec::new();
+
+                                    for guild_info in guilds {
+                                        let guild_id = guild_info.id;
+
+                                        // 1. Fetch Channels & Categories
+                                        if let Ok(channels) = guild_id.channels(&http_clone).await {
+                                            for (id, channel) in channels {
+                                                if channel.kind == serenity::ChannelType::Category {
+                                                    new_categories.push((id.to_string(), channel.name));
+                                                } else {
+                                                    new_channels.push((id.to_string(), channel.name));
+                                                }
+                                            }
+                                        }
+
+                                        // 2. Fetch Roles
+                                        if let Ok(roles) = guild_id.roles(&http_clone).await {
+                                            for (id, role) in roles {
+                                                let r = ((role.colour.0 >> 16) & 255) as u8;
+                                                let g = ((role.colour.0 >> 8) & 255) as u8;
+                                                let b = (role.colour.0 & 255) as u8;
+
+                                                new_roles.push(crate::types::DiscordRole {
+                                                    id: id.to_string(),
+                                                    name: role.name,
+                                                    color: (r, g, b),
+                                                });
+                                            }
+                                        }
+                                    }
+
+                                    // 3. Lock the state and hot-swap the fresh data
+                                    let (c_count, cat_count, r_count) = {
+                                        let mut state = state_clone.lock().unwrap();
+                                        state.channels = new_channels;
+                                        state.categories = new_categories;
+                                        state.roles = new_roles;
+                                        (state.channels.len(), state.categories.len(), state.roles.len())
+                                    };
+
+                                    let _ = tx.send(BotEvent::Log(format!(
+                                        "✅ Cached {} channels, {} categories, {} roles.",
+                                        c_count, cat_count, r_count
+                                    )));
+                                } else {
+                                    let _ = tx.send(BotEvent::Log("❌ Failed to fetch Discord cache!".into()));
+                                }
+                            });
+                        }
                         AdminCommand::SaveConfig { plugin, key, value } => {
                             let db_key = format!("config:{}:{}", plugin, key);
-                            
-                            // 1. Chained one-liner to satisfy the borrow checker
-                            // This locks the Mutex, calls the Lua function, and drops the lock instantly.
-                            let _ = lua_instance.lock().unwrap().globals()
+
+                            let _ = lua_instance
+                                .lock()
+                                .unwrap()
+                                .globals()
                                 .get::<_, mlua::Table>("navi")
                                 .and_then(|n| n.get::<_, mlua::Table>("db"))
                                 .and_then(|db| db.get::<_, mlua::Function>("set"))
-                                .and_then(|set_fn| set_fn.call::<_, ()>((db_key.clone(), value.clone())));
-                            
-                            // 2. Update the TUI visual registry
+                                .and_then(|set_fn| {
+                                    set_fn.call::<_, ()>((db_key.clone(), value.clone()))
+                                });
+
                             let mut registry = registry_for_loop.lock().unwrap();
                             if let Some(schema) = registry.get_mut(&plugin) {
-                                if let Some(field) = schema.fields.iter_mut().find(|f| f.key == key) {
+                                if let Some(field) = schema.fields.iter_mut().find(|f| f.key == key)
+                                {
                                     field.default_value = value.clone();
                                 }
                             }
-                            
-                            let _ = tx_for_loop.send(BotEvent::Log(format!("💾 Saved config: {} -> {}", db_key, value)));
+
+                            let _ = tx_for_loop.send(BotEvent::Log(format!(
+                                "💾 Saved config: {} -> {}",
+                                db_key, value
+                            )));
                         }
                     }
                 }
@@ -171,8 +245,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     // 4. RUN TUI (Main Thread)
-    // This must be OUTSIDE the spawn block
-    // tui::run(tx_to_bot, rx_from_tui)?;
     tui::run(tx_to_bot, rx_from_tui, registry_for_tui, state_for_tui)?;
 
     Ok(())

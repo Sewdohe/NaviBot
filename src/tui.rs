@@ -151,7 +151,7 @@ pub fn run(
                 let input_text = if input_mode {
                     format!("> {}_", input_buffer)
                 } else {
-                    String::from("Press 'q' to quit | 'r' to reload | 'i' to type | 'c' for Config")
+                    String::from("Press 'q' to quit | 'r' to reload | 'u' to re-cache channels & roles | 'i' to type | 'c' for Config")
                 };
 
                 let input_widget = Paragraph::new(input_text)
@@ -367,11 +367,15 @@ pub fn run(
                         KeyCode::Char('r') if !is_editing && !is_dropdown_open => {
                             let _ = tx_to_bot.send(AdminCommand::Reload);
                         }
+                        KeyCode::Char('u') if !is_editing && !is_dropdown_open => {
+                            let _ = tx_to_bot.send(AdminCommand::RefreshCache);
+                        }
                         KeyCode::Char('i') if !is_editing && !is_dropdown_open => {
                             if mode == AppMode::Logs { input_mode = true; }
                         }
                         KeyCode::Char('c') if !is_editing && !is_dropdown_open => mode = AppMode::Config,
                         KeyCode::Char('l') if !is_editing && !is_dropdown_open => mode = AppMode::Logs,
+                        
 
                         // --- DROPDOWN NAVIGATION ---
                         KeyCode::Up if is_dropdown_open => {

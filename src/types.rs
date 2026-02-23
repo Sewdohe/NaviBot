@@ -1,6 +1,9 @@
-use std::{collections::HashMap, sync::{Arc, Mutex}};
 use mlua::Lua;
 use rusqlite::Connection;
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 use tokio::sync::mpsc::UnboundedSender;
 
 // Events: Bot -> TUI
@@ -18,11 +21,12 @@ pub enum BotEvent {
 pub enum AdminCommand {
     Shutdown,
     Reload,
+    RefreshCache,
     // SendMessage { channel_id: u64, content: String },
-    SaveConfig { 
-        plugin: String, 
-        key: String, 
-        value: String 
+    SaveConfig {
+        plugin: String,
+        key: String,
+        value: String,
     },
 }
 
@@ -87,3 +91,4 @@ pub struct PluginSchema {
 
 // The Shared Registry (Thread-safe map of all plugin schemas)
 pub type ConfigRegistry = Arc<Mutex<HashMap<String, PluginSchema>>>;
+

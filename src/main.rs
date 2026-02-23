@@ -12,7 +12,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 use tokio::sync::mpsc;
-use types::{AdminCommand, BotEvent, LogLevel};
+use types::{AdminCommand, BotEvent, ConfigType, LogLevel};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenv().ok();
@@ -233,6 +233,151 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 "Saved config: {} -> {}",
                                 db_key, value
                             )));
+                        }
+                        AdminCommand::AppendListItem { plugin, key, item } => {
+                            let db_key_prefix = format!("config:{}:{}", plugin, key);
+                            let count_key = format!("{}:_count", db_key_prefix);
+
+                            let json = serde_json::to_string(&item).unwrap_or_default();
+                            let _ = lua_instance.lock().unwrap()
+                                .globals()
+                                .get::<_, mlua::Table>("navi")
+                                .and_then(|navi| {
+                                    let db_get = navi.get::<_, mlua::Function>("_db_get_raw")?;
+                                    let db_set = navi.get::<_, mlua::Function>("_db_set_raw")?;
+                                    let count: usize = db_get
+                                        .call::<_, mlua::Value>(count_key.clone())
+                                        .ok()
+                                        .and_then(|v| {
+                                            if let mlua::Value::String(s) = v {
+                                                s.to_str().ok().and_then(|s| s.parse().ok())
+                                            } else {
+                                                None
+                                            }
+                                        })
+                                        .unwrap_or(0);
+                                    let item_key = format!("{}:{}", db_key_prefix, count);
+                                    db_set.call::<_, ()>((item_key, json))?;
+                                    db_set.call::<_, ()>((count_key, (count + 1).to_string()))
+                                });
+
+                            let mut registry = registry_for_loop.lock().unwrap();
+                            if let Some(schema) = registry.get_mut(&plugin) {
+                                if let Some(field) = schema.fields.iter_mut().find(|f| {
+                                    f.key == key && f.field_type == ConfigType::List
+                                }) {
+                                    field.list_items.push(item);
+                                }
+                            }
+
+                            let _ = tx_for_loop.send(BotEvent::Log(
+                                LogLevel::Info,
+                                format!("List item appended: {}:{}", plugin, key),
+                            ));
+                        }
+                        AdminCommand::UpdateListItem { plugin, key, index, item } => {
+                            let db_key_prefix = format!("config:{}:{}", plugin, key);
+                            let item_key = format!("{}:{}", db_key_prefix, index);
+
+                            let json = serde_json::to_string(&item).unwrap_or_default();
+                            let _ = lua_instance.lock().unwrap()
+                                .globals()
+                                .get::<_, mlua::Table>("navi")
+                                .and_then(|navi| navi.get::<_, mlua::Function>("_db_set_raw"))
+                                .and_then(|db_set| db_set.call::<_, ()>((item_key, json)));
+
+                            let mut registry = registry_for_loop.lock().unwrap();
+                            if let Some(schema) = registry.get_mut(&plugin) {
+                                if let Some(field) = schema.fields.iter_mut().find(|f| {
+                                    f.key == key && f.field_type == ConfigType::List
+                                }) {
+                                    if index < field.list_items.len() {
+                                        field.list_items[index] = item;
+                                    }
+                                }
+                            }
+
+                            let _ = tx_for_loop.send(BotEvent::Log(
+                                LogLevel::Info,
+                                format!("List item updated: {}:{}[{}]", plugin, key, index),
+                            ));
+                        }
+                        AdminCommand::DeleteListItem { plugin, key, index } => {
+                            let db_key_prefix = format!("config:{}:{}", plugin, key);
+                            let count_key = format!("{}:_count", db_key_prefix);
+
+                            let deletion_done = {
+                                let lua = lua_instance.lock().unwrap();
+                                let result = if let Ok(navi) = lua.globals().get::<_, mlua::Table>("navi") {
+                                    let db_get = navi.get::<_, mlua::Function>("_db_get_raw").ok();
+                                    let db_set = navi.get::<_, mlua::Function>("_db_set_raw").ok();
+                                    if let (Some(db_get), Some(db_set)) = (db_get, db_set) {
+                                        let count: usize = db_get
+                                            .call::<_, mlua::Value>(count_key.clone())
+                                            .ok()
+                                            .and_then(|v| {
+                                                if let mlua::Value::String(s) = v {
+                                                    s.to_str().ok().and_then(|s| s.parse().ok())
+                                                } else {
+                                                    None
+                                                }
+                                            })
+                                            .unwrap_or(0);
+
+                                        if index < count {
+                                            // Collect surviving items
+                                            let mut survivors: Vec<String> = Vec::new();
+                                            for i in 0..count {
+                                                if i != index {
+                                                    let ikey = format!("{}:{}", db_key_prefix, i);
+                                                    if let Ok(mlua::Value::String(s)) =
+                                                        db_get.call::<_, mlua::Value>(ikey)
+                                                    {
+                                                        if let Ok(json) = s.to_str() {
+                                                            survivors.push(json.to_string());
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            // Rewrite repacked items
+                                            for (new_idx, json) in survivors.iter().enumerate() {
+                                                let ikey = format!("{}:{}", db_key_prefix, new_idx);
+                                                let _ = db_set.call::<_, ()>((ikey, json.clone()));
+                                            }
+                                            let _ = db_set.call::<_, ()>((
+                                                count_key,
+                                                survivors.len().to_string(),
+                                            ));
+                                            true
+                                        } else {
+                                            false
+                                        }
+                                    } else {
+                                        false
+                                    }
+                                } else {
+                                    false
+                                };
+                                result
+                            }; // lua lock released here
+
+                            if deletion_done {
+                                let mut registry = registry_for_loop.lock().unwrap();
+                                if let Some(schema) = registry.get_mut(&plugin) {
+                                    if let Some(field) = schema.fields.iter_mut().find(|f| {
+                                        f.key == key && f.field_type == ConfigType::List
+                                    }) {
+                                        if index < field.list_items.len() {
+                                            field.list_items.remove(index);
+                                        }
+                                    }
+                                }
+                            }
+
+                            let _ = tx_for_loop.send(BotEvent::Log(
+                                LogLevel::Info,
+                                format!("List item deleted: {}:{}[{}]", plugin, key, index),
+                            ));
                         }
                     }
                 }

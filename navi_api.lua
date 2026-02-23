@@ -108,13 +108,20 @@
 ---@field welcome_message string|nil @Text to send immediately after the channel is created
 ---@field close_button boolean|nil @Attach a red "Close Ticket" button to the welcome message
 
+--- Schema for one sub-field within a list config item.
+---@class NaviListItemSchema
+---@field key string @Key used inside each item table
+---@field name string @Human-readable label shown in the TUI
+---@field type "string"|"number"|"boolean"|"channel"|"role"|"category" @Controls the sub-field input widget
+
 --- A single entry in a plugin's configuration schema.
 ---@class NaviConfigItem
 ---@field key string @Database key used to store the value (e.g. `"log_channel"`)
 ---@field name string @Human-readable label shown in the TUI
 ---@field description string @Help text shown in the TUI
----@field type "string"|"number"|"boolean"|"channel"|"role"|"category" @Controls the TUI input widget
----@field default string|number|boolean @Value written to the DB if the user has not configured it yet
+---@field type "string"|"number"|"boolean"|"channel"|"role"|"category"|"list" @Controls the TUI input widget
+---@field default string|number|boolean|nil @Value written to the DB if the user has not configured it yet; omit for list fields
+---@field item_schema NaviListItemSchema[]|nil @Required when type = "list"; defines the sub-fields of each item
 
 --- A Discord role from the cached guild state.
 ---@class NaviRole
@@ -140,6 +147,7 @@
 ---@field get fun(key: string): string|nil @Reads a value; the key is auto-namespaced to the calling plugin
 ---@field set fun(key: string, value: string|number|boolean) @Writes a value; the key is auto-namespaced to the calling plugin
 ---@field query fun(sql: string): NaviDBRow[] @Executes raw SQL and returns an array of `{key, value}` rows
+---@field get_list fun(key: string): table[] @Returns all items of a list config field as an array of tables
 
 -------------------------------------------------------------------------------
 -- 🚀 THE GLOBAL NAVI API

@@ -1,4 +1,5 @@
-use crate::types::{AdminCommand, BotEvent, ConfigRegistry, LogLevel, SharedDiscordState, ConfigType};
+use crate::types::{AdminCommand, BotEvent, ConfigRegistry, ConfigType, LogLevel, SharedDiscordState};
+use std::collections::HashMap;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
     execute,
@@ -25,6 +26,8 @@ enum AppMode {
 enum ConfigPane {
     PluginList,
     FieldList,
+    ListManager,
+    ItemEditor,
 }
 
 pub fn run(
@@ -59,9 +62,21 @@ pub fn run(
     let mut is_editing = false;
     let mut edit_buffer = String::new();
 
-    // DROPDOWN STATE 
+    // DROPDOWN STATE
     let mut is_dropdown_open = false;
     let mut dropdown_selected_index = 0;
+
+    // LIST MANAGER STATE
+    let mut selected_list_item_index: usize = 0;
+
+    // ITEM EDITOR STATE
+    let mut item_edit_buffer: HashMap<String, String> = HashMap::new();
+    let mut item_edit_field_index: usize = 0;
+    let mut item_editing_index: Option<usize> = None; // None = new, Some(i) = editing existing
+    let mut item_subfield_editing = false;
+    let mut item_subfield_buffer = String::new();
+    let mut item_dropdown_open = false;
+    let mut item_dropdown_index: usize = 0;
 
     // 3. MAIN LOOP
     loop {
@@ -222,116 +237,423 @@ pub fn run(
                     f.render_widget(left_pane, chunks[0]);
 
 
-                // Right Pane: Config Fields
+                // Right Pane: Config Fields / List Manager / Item Editor
                 let active_plugin = &plugin_names[selected_plugin_index];
                 if let Some(schema) = registry.get(active_plugin) {
-                    let mut text = vec![
-                        Line::from(Span::styled(
-                            format!("Configuration for: {}", active_plugin),
-                            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-                        )),
-                        Line::from(""),
-                    ];
-
                     // Prevent field index out of bounds
                     if selected_field_index >= schema.fields.len() {
                         selected_field_index = schema.fields.len().saturating_sub(1);
                     }
 
-                    for (i, field) in schema.fields.iter().enumerate() {
-                        let name_style = if config_pane == ConfigPane::FieldList && i == selected_field_index {
-                            Style::default().fg(Color::Black).bg(Color::Yellow) 
-                        } else {
-                            Style::default().fg(Color::Yellow)
-                        };
-                        
-                        text.push(Line::from(Span::styled(&field.name, name_style)));
-                        text.push(Line::from(Span::styled(&field.description, Style::default().fg(Color::DarkGray))));
-                        
-                        // Show the typing buffer if editing, otherwise show the current value
-                        if is_editing && i == selected_field_index {
-                            text.push(Line::from(Span::styled(
-                                format!(" [ {}_ ]", edit_buffer), 
-                                Style::default().fg(Color::White).bg(Color::DarkGray)
-                            )));
-                        } else {
-                            text.push(Line::from(format!(" [ {} ]", field.default_value)));
-                        }
-                        
-                        text.push(Line::from("")); 
-                    }
+                    if config_pane == ConfigPane::ListManager {
+                        if let Some(list_field) = schema.fields.get(selected_field_index) {
+                            // Clamp list item selection
+                            if !list_field.list_items.is_empty()
+                                && selected_list_item_index >= list_field.list_items.len()
+                            {
+                                selected_list_item_index =
+                                    list_field.list_items.len().saturating_sub(1);
+                            }
 
-                    text.push(Line::from(Span::styled("Press 'l' to return to logs.", Style::default().fg(Color::DarkGray))));
+                            let mut text = vec![Line::from("")];
 
-                    let right_pane = Paragraph::new(text)
-                        .block(Block::default()
-                            .title(if config_pane == ConfigPane::FieldList { "⚙️ Settings (Editing)" } else { "⚙️ Settings" })
-                            .borders(Borders::ALL)
-                            .border_style(if config_pane == ConfigPane::FieldList { Style::default().fg(Color::Green) } else { Style::default() })
-                        );
-                    f.render_widget(right_pane, chunks[1]);
+                            if list_field.list_items.is_empty() {
+                                text.push(Line::from(Span::styled(
+                                    "  (no items yet — press 'n' to add one)",
+                                    Style::default().fg(Color::DarkGray),
+                                )));
+                            } else {
+                                for (i, item) in list_field.list_items.iter().enumerate() {
+                                    let summary: String = list_field
+                                        .item_schema
+                                        .iter()
+                                        .map(|s| {
+                                            format!(
+                                                "{}={}",
+                                                s.key,
+                                                item.get(&s.key).map(|v| v.as_str()).unwrap_or("")
+                                            )
+                                        })
+                                        .collect::<Vec<_>>()
+                                        .join("  ");
 
-                    // --- DROPDOWN POPUP OVERLAY ---
-                    if is_dropdown_open {
-                        let v_chunks = Layout::default()
-                            .direction(Direction::Vertical)
-                            .constraints([Constraint::Percentage(20), Constraint::Percentage(60), Constraint::Percentage(20)])
-                            .split(chunks[1]);
-                        let popup_area = Layout::default()
-                            .direction(Direction::Horizontal)
-                            .constraints([Constraint::Percentage(10), Constraint::Percentage(80), Constraint::Percentage(10)])
-                            .split(v_chunks[1])[1];
-
-                        f.render_widget(Clear, popup_area);
-
-                        let state = discord_state.lock().unwrap();
-                        let active_field_type = schema.fields[selected_field_index].field_type.clone();
-
-                        let (list_title, list_len) = match active_field_type {
-                            ConfigType::Channel => (" 📚 Select Channel ", state.channels.len()),
-                            ConfigType::Category => (" 📁 Select Category ", state.categories.len()),
-                            ConfigType::Role => (" 🎭 Select Role ", state.roles.len()),
-                            _ => (" Select ", 0),
-                        };
-
-                        let safe_index = dropdown_selected_index.min(list_len.saturating_sub(1));
-
-                        let items: Vec<ListItem> = match active_field_type {
-                            ConfigType::Channel => state.channels.iter().enumerate().map(|(i, (id, name))| {
-                                if i == safe_index {
-                                    ListItem::new(format!("> #{} ({})", name, id)).style(Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD))
-                                } else { ListItem::new(format!("  #{}", name)) }
-                            }).collect(),
-                            ConfigType::Category => state.categories.iter().enumerate().map(|(i, (id, name))| {
-                                if i == safe_index {
-                                    ListItem::new(format!("> 📁 {} ({})", name, id)).style(Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD))
-                                } else { ListItem::new(format!("  📁 {}", name)) }
-                            }).collect(),
-                            ConfigType::Role => state.roles.iter().enumerate().map(|(i, role)| {
-                                let display_color = if role.color == (0, 0, 0) { Color::White } else { Color::Rgb(role.color.0, role.color.1, role.color.2) };
-                                
-                                let mut style = Style::default().fg(display_color);
-                                if i == safe_index {
-                                    style = style.bg(Color::DarkGray).add_modifier(Modifier::BOLD);
-                                    ListItem::new(format!("> @{} ({})", role.name, role.id)).style(style)
-                                } else {
-                                    ListItem::new(format!("  @{}", role.name)).style(style)
+                                    let line = if i == selected_list_item_index {
+                                        Line::from(Span::styled(
+                                            format!(" > #{} {}", i + 1, summary),
+                                            Style::default()
+                                                .fg(Color::Black)
+                                                .bg(Color::Yellow)
+                                                .add_modifier(Modifier::BOLD),
+                                        ))
+                                    } else {
+                                        Line::from(format!("   #{} {}", i + 1, summary))
+                                    };
+                                    text.push(line);
                                 }
-                            }).collect(),
-                            _ => vec![],
-                        };
+                            }
 
-                        let list = List::new(items)
-                            .block(Block::default()
-                                .title(format!("{} (Up/Down/Enter) ", list_title))
+                            text.push(Line::from(""));
+                            text.push(Line::from(Span::styled(
+                                "n=add  d=delete  Enter=edit  Esc=back",
+                                Style::default().fg(Color::DarkGray),
+                            )));
+
+                            let right_pane = Paragraph::new(text).block(
+                                Block::default()
+                                    .title(format!(
+                                        " {} ({} items) ",
+                                        list_field.name,
+                                        list_field.list_items.len()
+                                    ))
+                                    .borders(Borders::ALL)
+                                    .border_style(Style::default().fg(Color::Green)),
+                            );
+                            f.render_widget(right_pane, chunks[1]);
+                        }
+                    } else if config_pane == ConfigPane::ItemEditor {
+                        if let Some(list_field) = schema.fields.get(selected_field_index) {
+                            // Clamp sub-field selection
+                            if !list_field.item_schema.is_empty()
+                                && item_edit_field_index >= list_field.item_schema.len()
+                            {
+                                item_edit_field_index =
+                                    list_field.item_schema.len().saturating_sub(1);
+                            }
+
+                            let title = match item_editing_index {
+                                Some(i) => format!(" Editing item #{} ", i + 1),
+                                None => " New Item ".to_string(),
+                            };
+
+                            let mut text = vec![Line::from("")];
+
+                            for (i, sub_field) in list_field.item_schema.iter().enumerate() {
+                                let name_style = if i == item_edit_field_index {
+                                    Style::default().fg(Color::Black).bg(Color::Yellow)
+                                } else {
+                                    Style::default().fg(Color::Yellow)
+                                };
+
+                                text.push(Line::from(Span::styled(&sub_field.name, name_style)));
+
+                                let current_val = item_edit_buffer
+                                    .get(&sub_field.key)
+                                    .cloned()
+                                    .unwrap_or_default();
+
+                                if item_subfield_editing && i == item_edit_field_index {
+                                    text.push(Line::from(Span::styled(
+                                        format!(" [ {}_ ]", item_subfield_buffer),
+                                        Style::default().fg(Color::White).bg(Color::DarkGray),
+                                    )));
+                                } else {
+                                    text.push(Line::from(format!(" [ {} ]", current_val)));
+                                }
+
+                                text.push(Line::from(""));
+                            }
+
+                            text.push(Line::from(Span::styled(
+                                "s=save  Esc=cancel",
+                                Style::default().fg(Color::DarkGray),
+                            )));
+
+                            let right_pane = Paragraph::new(text).block(
+                                Block::default()
+                                    .title(title)
+                                    .borders(Borders::ALL)
+                                    .border_style(Style::default().fg(Color::Cyan)),
+                            );
+                            f.render_widget(right_pane, chunks[1]);
+
+                            // Item sub-field dropdown popup
+                            if item_dropdown_open {
+                                let v_chunks = Layout::default()
+                                    .direction(Direction::Vertical)
+                                    .constraints([
+                                        Constraint::Percentage(20),
+                                        Constraint::Percentage(60),
+                                        Constraint::Percentage(20),
+                                    ])
+                                    .split(chunks[1]);
+                                let popup_area = Layout::default()
+                                    .direction(Direction::Horizontal)
+                                    .constraints([
+                                        Constraint::Percentage(10),
+                                        Constraint::Percentage(80),
+                                        Constraint::Percentage(10),
+                                    ])
+                                    .split(v_chunks[1])[1];
+
+                                f.render_widget(Clear, popup_area);
+
+                                let state = discord_state.lock().unwrap();
+                                let sub_field_type = list_field
+                                    .item_schema
+                                    .get(item_edit_field_index)
+                                    .map(|s| s.field_type.clone())
+                                    .unwrap_or(ConfigType::String);
+
+                                let (list_title, list_len) = match sub_field_type {
+                                    ConfigType::Channel => {
+                                        (" 📚 Select Channel ", state.channels.len())
+                                    }
+                                    ConfigType::Category => {
+                                        (" 📁 Select Category ", state.categories.len())
+                                    }
+                                    ConfigType::Role => (" 🎭 Select Role ", state.roles.len()),
+                                    _ => (" Select ", 0),
+                                };
+
+                                let safe_idx =
+                                    item_dropdown_index.min(list_len.saturating_sub(1));
+
+                                let popup_items: Vec<ListItem> = match sub_field_type {
+                                    ConfigType::Channel => state
+                                        .channels
+                                        .iter()
+                                        .enumerate()
+                                        .map(|(i, (id, name))| {
+                                            if i == safe_idx {
+                                                ListItem::new(format!("> #{} ({})", name, id))
+                                                    .style(Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD))
+                                            } else {
+                                                ListItem::new(format!("  #{}", name))
+                                            }
+                                        })
+                                        .collect(),
+                                    ConfigType::Category => state
+                                        .categories
+                                        .iter()
+                                        .enumerate()
+                                        .map(|(i, (id, name))| {
+                                            if i == safe_idx {
+                                                ListItem::new(format!("> 📁 {} ({})", name, id))
+                                                    .style(Style::default().fg(Color::Black).bg(Color::Yellow).add_modifier(Modifier::BOLD))
+                                            } else {
+                                                ListItem::new(format!("  📁 {}", name))
+                                            }
+                                        })
+                                        .collect(),
+                                    ConfigType::Role => state
+                                        .roles
+                                        .iter()
+                                        .enumerate()
+                                        .map(|(i, role)| {
+                                            let dc = if role.color == (0, 0, 0) {
+                                                Color::White
+                                            } else {
+                                                Color::Rgb(role.color.0, role.color.1, role.color.2)
+                                            };
+                                            let mut style = Style::default().fg(dc);
+                                            if i == safe_idx {
+                                                style = style.bg(Color::DarkGray).add_modifier(Modifier::BOLD);
+                                                ListItem::new(format!("> @{} ({})", role.name, role.id)).style(style)
+                                            } else {
+                                                ListItem::new(format!("  @{}", role.name)).style(style)
+                                            }
+                                        })
+                                        .collect(),
+                                    _ => vec![],
+                                };
+
+                                let list = List::new(popup_items).block(
+                                    Block::default()
+                                        .title(format!("{} (Up/Down/Enter) ", list_title))
+                                        .borders(Borders::ALL)
+                                        .border_style(Style::default().fg(Color::Cyan)),
+                                );
+                                f.render_widget(list, popup_area);
+                            }
+                        }
+                    } else {
+                        // --- FIELD LIST RENDERING ---
+                        let mut text = vec![
+                            Line::from(Span::styled(
+                                format!("Configuration for: {}", active_plugin),
+                                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                            )),
+                            Line::from(""),
+                        ];
+
+                        for (i, field) in schema.fields.iter().enumerate() {
+                            let name_style = if config_pane == ConfigPane::FieldList
+                                && i == selected_field_index
+                            {
+                                Style::default().fg(Color::Black).bg(Color::Yellow)
+                            } else {
+                                Style::default().fg(Color::Yellow)
+                            };
+
+                            text.push(Line::from(Span::styled(&field.name, name_style)));
+                            text.push(Line::from(Span::styled(
+                                &field.description,
+                                Style::default().fg(Color::DarkGray),
+                            )));
+
+                            if field.field_type == ConfigType::List {
+                                text.push(Line::from(format!(
+                                    " [ {} items ]",
+                                    field.list_items.len()
+                                )));
+                            } else if is_editing && i == selected_field_index {
+                                text.push(Line::from(Span::styled(
+                                    format!(" [ {}_ ]", edit_buffer),
+                                    Style::default().fg(Color::White).bg(Color::DarkGray),
+                                )));
+                            } else {
+                                text.push(Line::from(format!(" [ {} ]", field.default_value)));
+                            }
+
+                            text.push(Line::from(""));
+                        }
+
+                        text.push(Line::from(Span::styled(
+                            "Press 'l' to return to logs.",
+                            Style::default().fg(Color::DarkGray),
+                        )));
+
+                        let right_pane = Paragraph::new(text).block(
+                            Block::default()
+                                .title(if config_pane == ConfigPane::FieldList {
+                                    "⚙️ Settings (Editing)"
+                                } else {
+                                    "⚙️ Settings"
+                                })
                                 .borders(Borders::ALL)
-                                .border_style(Style::default().fg(Color::Cyan)));
-                        f.render_widget(list, popup_area);
+                                .border_style(if config_pane == ConfigPane::FieldList {
+                                    Style::default().fg(Color::Green)
+                                } else {
+                                    Style::default()
+                                }),
+                        );
+                        f.render_widget(right_pane, chunks[1]);
+
+                        // --- DROPDOWN POPUP OVERLAY ---
+                        if is_dropdown_open {
+                            let v_chunks = Layout::default()
+                                .direction(Direction::Vertical)
+                                .constraints([
+                                    Constraint::Percentage(20),
+                                    Constraint::Percentage(60),
+                                    Constraint::Percentage(20),
+                                ])
+                                .split(chunks[1]);
+                            let popup_area = Layout::default()
+                                .direction(Direction::Horizontal)
+                                .constraints([
+                                    Constraint::Percentage(10),
+                                    Constraint::Percentage(80),
+                                    Constraint::Percentage(10),
+                                ])
+                                .split(v_chunks[1])[1];
+
+                            f.render_widget(Clear, popup_area);
+
+                            let state = discord_state.lock().unwrap();
+                            let active_field_type =
+                                schema.fields[selected_field_index].field_type.clone();
+
+                            let (list_title, list_len) = match active_field_type {
+                                ConfigType::Channel => {
+                                    (" 📚 Select Channel ", state.channels.len())
+                                }
+                                ConfigType::Category => {
+                                    (" 📁 Select Category ", state.categories.len())
+                                }
+                                ConfigType::Role => (" 🎭 Select Role ", state.roles.len()),
+                                _ => (" Select ", 0),
+                            };
+
+                            let safe_index =
+                                dropdown_selected_index.min(list_len.saturating_sub(1));
+
+                            let items: Vec<ListItem> = match active_field_type {
+                                ConfigType::Channel => state
+                                    .channels
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(i, (id, name))| {
+                                        if i == safe_index {
+                                            ListItem::new(format!("> #{} ({})", name, id)).style(
+                                                Style::default()
+                                                    .fg(Color::Black)
+                                                    .bg(Color::Cyan)
+                                                    .add_modifier(Modifier::BOLD),
+                                            )
+                                        } else {
+                                            ListItem::new(format!("  #{}", name))
+                                        }
+                                    })
+                                    .collect(),
+                                ConfigType::Category => state
+                                    .categories
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(i, (id, name))| {
+                                        if i == safe_index {
+                                            ListItem::new(format!("> 📁 {} ({})", name, id))
+                                                .style(
+                                                    Style::default()
+                                                        .fg(Color::Black)
+                                                        .bg(Color::Yellow)
+                                                        .add_modifier(Modifier::BOLD),
+                                                )
+                                        } else {
+                                            ListItem::new(format!("  📁 {}", name))
+                                        }
+                                    })
+                                    .collect(),
+                                ConfigType::Role => state
+                                    .roles
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(i, role)| {
+                                        let display_color = if role.color == (0, 0, 0) {
+                                            Color::White
+                                        } else {
+                                            Color::Rgb(role.color.0, role.color.1, role.color.2)
+                                        };
+
+                                        let mut style = Style::default().fg(display_color);
+                                        if i == safe_index {
+                                            style = style
+                                                .bg(Color::DarkGray)
+                                                .add_modifier(Modifier::BOLD);
+                                            ListItem::new(format!(
+                                                "> @{} ({})",
+                                                role.name, role.id
+                                            ))
+                                            .style(style)
+                                        } else {
+                                            ListItem::new(format!("  @{}", role.name)).style(style)
+                                        }
+                                    })
+                                    .collect(),
+                                _ => vec![],
+                            };
+
+                            let list = List::new(items).block(
+                                Block::default()
+                                    .title(format!("{} (Up/Down/Enter) ", list_title))
+                                    .borders(Borders::ALL)
+                                    .border_style(Style::default().fg(Color::Cyan)),
+                            );
+                            f.render_widget(list, popup_area);
+                        }
                     }
                 }
 
                 // --- DYNAMIC CONTROLS FOOTER ---
-                    let help_text = if is_dropdown_open {
+                    let help_text = if item_dropdown_open {
+                        "Up/Down to scroll | Enter to confirm | Esc to cancel"
+                    } else if item_subfield_editing {
+                        "Type value | Enter to confirm | Esc to cancel"
+                    } else if config_pane == ConfigPane::ItemEditor {
+                        "Up/Down to select sub-field | Enter to edit | s=save  Esc=back"
+                    } else if config_pane == ConfigPane::ListManager {
+                        "Up/Down to select item | Enter=edit | n=add | d=delete | Esc=back"
+                    } else if is_dropdown_open {
                         "Press 'Up/Down' to scroll | 'Enter' to confirm selection | 'Esc' to cancel"
                     } else if is_editing {
                         "Type your value | Press 'Enter' to save | 'Esc' to cancel"
@@ -371,21 +693,21 @@ pub fn run(
                 } else {
                     match key.code {
                         // --- GLOBAL HOTKEYS ---
-                        KeyCode::Char('q') if !is_editing && !is_dropdown_open => {
+                        KeyCode::Char('q') if !is_editing && !is_dropdown_open && !item_subfield_editing && !item_dropdown_open => {
                             let _ = tx_to_bot.send(AdminCommand::Shutdown);
-                            break; 
+                            break;
                         }
-                        KeyCode::Char('r') if !is_editing && !is_dropdown_open => {
+                        KeyCode::Char('r') if !is_editing && !is_dropdown_open && !item_subfield_editing && !item_dropdown_open => {
                             let _ = tx_to_bot.send(AdminCommand::Reload);
                         }
-                        KeyCode::Char('u') if !is_editing && !is_dropdown_open => {
+                        KeyCode::Char('u') if !is_editing && !is_dropdown_open && !item_subfield_editing && !item_dropdown_open => {
                             let _ = tx_to_bot.send(AdminCommand::RefreshCache);
                         }
-                        KeyCode::Char('i') if !is_editing && !is_dropdown_open => {
+                        KeyCode::Char('i') if !is_editing && !is_dropdown_open && !item_subfield_editing && !item_dropdown_open => {
                             if mode == AppMode::Logs { input_mode = true; }
                         }
-                        KeyCode::Char('c') if !is_editing && !is_dropdown_open => mode = AppMode::Config,
-                        KeyCode::Char('l') if !is_editing && !is_dropdown_open => mode = AppMode::Logs,
+                        KeyCode::Char('c') if !is_editing && !is_dropdown_open && !item_subfield_editing && !item_dropdown_open => mode = AppMode::Config,
+                        KeyCode::Char('l') if !is_editing && !is_dropdown_open && !item_subfield_editing && !item_dropdown_open => mode = AppMode::Logs,
 
                         // --- LOG SCROLLING ---
                         KeyCode::Up if mode == AppMode::Logs => {
@@ -434,6 +756,14 @@ pub fn run(
                         KeyCode::Left | KeyCode::Esc if mode == AppMode::Config && config_pane == ConfigPane::FieldList && !is_editing && !is_dropdown_open => {
                             config_pane = ConfigPane::PluginList;
                         }
+                        KeyCode::Left | KeyCode::Esc if mode == AppMode::Config && config_pane == ConfigPane::ListManager => {
+                            config_pane = ConfigPane::FieldList;
+                        }
+                        KeyCode::Esc if mode == AppMode::Config && config_pane == ConfigPane::ItemEditor && !item_subfield_editing && !item_dropdown_open => {
+                            config_pane = ConfigPane::ListManager;
+                            item_edit_buffer.clear();
+                            item_editing_index = None;
+                        }
                         
                         // Navigating Left Pane
                         KeyCode::Up if mode == AppMode::Config && config_pane == ConfigPane::PluginList && !is_dropdown_open => {
@@ -458,6 +788,234 @@ pub fn run(
                                     if selected_field_index < max { selected_field_index += 1; }
                                 }
                             }
+                        }
+
+                        // Navigating ListManager
+                        KeyCode::Up if mode == AppMode::Config && config_pane == ConfigPane::ListManager => {
+                            selected_list_item_index = selected_list_item_index.saturating_sub(1);
+                        }
+                        KeyCode::Down if mode == AppMode::Config && config_pane == ConfigPane::ListManager => {
+                            let registry = config_registry.lock().unwrap();
+                            let mut names: Vec<String> = registry.keys().cloned().collect();
+                            names.sort();
+                            if let Some(name) = names.get(selected_plugin_index) {
+                                if let Some(schema) = registry.get(name) {
+                                    if let Some(field) = schema.fields.get(selected_field_index) {
+                                        let max = field.list_items.len().saturating_sub(1);
+                                        if selected_list_item_index < max { selected_list_item_index += 1; }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Navigating ItemEditor sub-fields
+                        KeyCode::Up if mode == AppMode::Config && config_pane == ConfigPane::ItemEditor && !item_subfield_editing && !item_dropdown_open => {
+                            item_edit_field_index = item_edit_field_index.saturating_sub(1);
+                        }
+                        KeyCode::Down if mode == AppMode::Config && config_pane == ConfigPane::ItemEditor && !item_subfield_editing && !item_dropdown_open => {
+                            let registry = config_registry.lock().unwrap();
+                            let mut names: Vec<String> = registry.keys().cloned().collect();
+                            names.sort();
+                            if let Some(name) = names.get(selected_plugin_index) {
+                                if let Some(schema) = registry.get(name) {
+                                    if let Some(field) = schema.fields.get(selected_field_index) {
+                                        let max = field.item_schema.len().saturating_sub(1);
+                                        if item_edit_field_index < max { item_edit_field_index += 1; }
+                                    }
+                                }
+                            }
+                        }
+
+                        // --- LIST MANAGER KEYS ---
+                        KeyCode::Char('n') if mode == AppMode::Config && config_pane == ConfigPane::ListManager => {
+                            // Open ItemEditor for a new item
+                            item_edit_buffer.clear();
+                            item_edit_field_index = 0;
+                            item_editing_index = None;
+                            item_subfield_editing = false;
+                            item_dropdown_open = false;
+                            config_pane = ConfigPane::ItemEditor;
+                        }
+                        KeyCode::Enter if mode == AppMode::Config && config_pane == ConfigPane::ListManager => {
+                            // Open ItemEditor for existing item
+                            let registry = config_registry.lock().unwrap();
+                            let mut names: Vec<String> = registry.keys().cloned().collect();
+                            names.sort();
+                            if let Some(name) = names.get(selected_plugin_index) {
+                                if let Some(schema) = registry.get(name) {
+                                    if let Some(field) = schema.fields.get(selected_field_index) {
+                                        if let Some(item) = field.list_items.get(selected_list_item_index) {
+                                            item_edit_buffer = item.clone();
+                                            item_edit_field_index = 0;
+                                            item_editing_index = Some(selected_list_item_index);
+                                            item_subfield_editing = false;
+                                            item_dropdown_open = false;
+                                            config_pane = ConfigPane::ItemEditor;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        KeyCode::Char('d') if mode == AppMode::Config && config_pane == ConfigPane::ListManager => {
+                            let plugin_name = {
+                                let registry = config_registry.lock().unwrap();
+                                let mut names: Vec<String> = registry.keys().cloned().collect();
+                                names.sort();
+                                names.get(selected_plugin_index).cloned()
+                            };
+                            if let Some(plugin) = plugin_name {
+                                let field_key = {
+                                    let registry = config_registry.lock().unwrap();
+                                    registry.get(&plugin).and_then(|s| s.fields.get(selected_field_index)).map(|f| f.key.clone())
+                                };
+                                if let Some(key) = field_key {
+                                    let _ = tx_to_bot.send(AdminCommand::DeleteListItem {
+                                        plugin,
+                                        key,
+                                        index: selected_list_item_index,
+                                    });
+                                    selected_list_item_index = selected_list_item_index.saturating_sub(1);
+                                }
+                            }
+                        }
+
+                        // --- ITEM EDITOR KEYS ---
+                        // item dropdown navigation
+                        KeyCode::Up if mode == AppMode::Config && config_pane == ConfigPane::ItemEditor && item_dropdown_open => {
+                            item_dropdown_index = item_dropdown_index.saturating_sub(1);
+                        }
+                        KeyCode::Down if mode == AppMode::Config && config_pane == ConfigPane::ItemEditor && item_dropdown_open => {
+                            let registry = config_registry.lock().unwrap();
+                            let mut names: Vec<String> = registry.keys().cloned().collect();
+                            names.sort();
+                            let sub_type = names.get(selected_plugin_index)
+                                .and_then(|n| registry.get(n))
+                                .and_then(|s| s.fields.get(selected_field_index))
+                                .and_then(|f| f.item_schema.get(item_edit_field_index))
+                                .map(|sf| sf.field_type.clone())
+                                .unwrap_or(ConfigType::String);
+                            let state = discord_state.lock().unwrap();
+                            let max = match sub_type {
+                                ConfigType::Channel => state.channels.len(),
+                                ConfigType::Category => state.categories.len(),
+                                ConfigType::Role => state.roles.len(),
+                                _ => 0,
+                            }.saturating_sub(1);
+                            if item_dropdown_index < max { item_dropdown_index += 1; }
+                        }
+                        KeyCode::Esc if mode == AppMode::Config && config_pane == ConfigPane::ItemEditor && item_dropdown_open => {
+                            item_dropdown_open = false;
+                        }
+                        KeyCode::Enter if mode == AppMode::Config && config_pane == ConfigPane::ItemEditor && item_dropdown_open => {
+                            // Save dropdown selection into item_edit_buffer
+                            let registry = config_registry.lock().unwrap();
+                            let mut names: Vec<String> = registry.keys().cloned().collect();
+                            names.sort();
+                            if let Some(name) = names.get(selected_plugin_index) {
+                                if let Some(schema) = registry.get(name) {
+                                    if let Some(field) = schema.fields.get(selected_field_index) {
+                                        if let Some(sub_field) = field.item_schema.get(item_edit_field_index) {
+                                            let state = discord_state.lock().unwrap();
+                                            let selected_id = match sub_field.field_type {
+                                                ConfigType::Channel => state.channels.get(item_dropdown_index).map(|(id, _)| id.clone()),
+                                                ConfigType::Category => state.categories.get(item_dropdown_index).map(|(id, _)| id.clone()),
+                                                ConfigType::Role => state.roles.get(item_dropdown_index).map(|r| r.id.clone()),
+                                                _ => None,
+                                            };
+                                            if let Some(id) = selected_id {
+                                                item_edit_buffer.insert(sub_field.key.clone(), id);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            item_dropdown_open = false;
+                        }
+                        // typing inside item sub-field text box
+                        KeyCode::Esc if mode == AppMode::Config && config_pane == ConfigPane::ItemEditor && item_subfield_editing => {
+                            item_subfield_editing = false;
+                            item_subfield_buffer.clear();
+                        }
+                        KeyCode::Backspace if mode == AppMode::Config && config_pane == ConfigPane::ItemEditor && item_subfield_editing => {
+                            item_subfield_buffer.pop();
+                        }
+                        KeyCode::Char(c) if mode == AppMode::Config && config_pane == ConfigPane::ItemEditor && item_subfield_editing => {
+                            item_subfield_buffer.push(c);
+                        }
+                        KeyCode::Enter if mode == AppMode::Config && config_pane == ConfigPane::ItemEditor && item_subfield_editing => {
+                            // Save sub-field text box value
+                            let registry = config_registry.lock().unwrap();
+                            let mut names: Vec<String> = registry.keys().cloned().collect();
+                            names.sort();
+                            if let Some(name) = names.get(selected_plugin_index) {
+                                if let Some(schema) = registry.get(name) {
+                                    if let Some(field) = schema.fields.get(selected_field_index) {
+                                        if let Some(sub_field) = field.item_schema.get(item_edit_field_index) {
+                                            item_edit_buffer.insert(sub_field.key.clone(), item_subfield_buffer.clone());
+                                        }
+                                    }
+                                }
+                            }
+                            item_subfield_editing = false;
+                            item_subfield_buffer.clear();
+                        }
+                        // open editor/dropdown for selected sub-field
+                        KeyCode::Enter if mode == AppMode::Config && config_pane == ConfigPane::ItemEditor && !item_subfield_editing && !item_dropdown_open => {
+                            let registry = config_registry.lock().unwrap();
+                            let mut names: Vec<String> = registry.keys().cloned().collect();
+                            names.sort();
+                            if let Some(name) = names.get(selected_plugin_index) {
+                                if let Some(schema) = registry.get(name) {
+                                    if let Some(field) = schema.fields.get(selected_field_index) {
+                                        if let Some(sub_field) = field.item_schema.get(item_edit_field_index) {
+                                            match sub_field.field_type {
+                                                ConfigType::Channel | ConfigType::Category | ConfigType::Role => {
+                                                    item_dropdown_open = true;
+                                                    item_dropdown_index = 0;
+                                                }
+                                                ConfigType::Boolean => {
+                                                    let current = item_edit_buffer.get(&sub_field.key).map(|v| v.as_str()).unwrap_or("false");
+                                                    let new_val = if current == "true" { "false" } else { "true" };
+                                                    item_edit_buffer.insert(sub_field.key.clone(), new_val.to_string());
+                                                }
+                                                _ => {
+                                                    item_subfield_buffer = item_edit_buffer.get(&sub_field.key).cloned().unwrap_or_default();
+                                                    item_subfield_editing = true;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        // save the item
+                        KeyCode::Char('s') if mode == AppMode::Config && config_pane == ConfigPane::ItemEditor && !item_subfield_editing => {
+                            let plugin_name = {
+                                let registry = config_registry.lock().unwrap();
+                                let mut names: Vec<String> = registry.keys().cloned().collect();
+                                names.sort();
+                                names.get(selected_plugin_index).cloned()
+                            };
+                            if let Some(plugin) = plugin_name {
+                                let field_key = {
+                                    let registry = config_registry.lock().unwrap();
+                                    registry.get(&plugin).and_then(|s| s.fields.get(selected_field_index)).map(|f| f.key.clone())
+                                };
+                                if let Some(key) = field_key {
+                                    let item = item_edit_buffer.clone();
+                                    match item_editing_index {
+                                        None => {
+                                            let _ = tx_to_bot.send(AdminCommand::AppendListItem { plugin, key, item });
+                                        }
+                                        Some(i) => {
+                                            let _ = tx_to_bot.send(AdminCommand::UpdateListItem { plugin, key, index: i, item });
+                                        }
+                                    }
+                                }
+                            }
+                            item_edit_buffer.clear();
+                            item_editing_index = None;
+                            config_pane = ConfigPane::ListManager;
                         }
 
                         // --- EDITING A FIELD OR SELECTING DROPDOWN ---
@@ -519,24 +1077,28 @@ pub fn run(
                                 edit_buffer.clear();
                             } 
                             else {
-                                // 3. Open Editor, Dropdown, or Toggle Boolean
+                                // 3. Open Editor, Dropdown, List Manager, or Toggle Boolean
                                 let mut registry = config_registry.lock().unwrap();
                                 let mut names: Vec<String> = registry.keys().cloned().collect();
                                 names.sort();
-                                
+
                                 if let Some(plugin_name) = names.get(selected_plugin_index).cloned() {
                                     if let Some(schema) = registry.get_mut(&plugin_name) {
                                         if let Some(field) = schema.fields.get_mut(selected_field_index) {
-                                            
-                                            if field.field_type == ConfigType::Channel || field.field_type == ConfigType::Role || field.field_type == ConfigType::Category {
+
+                                            if field.field_type == ConfigType::List {
+                                                // Navigate into List Manager
+                                                config_pane = ConfigPane::ListManager;
+                                                selected_list_item_index = 0;
+                                            } else if field.field_type == ConfigType::Channel || field.field_type == ConfigType::Role || field.field_type == ConfigType::Category {
                                                 is_dropdown_open = true;
                                                 dropdown_selected_index = 0;
                                             } else if field.field_type == ConfigType::Boolean {
                                                 // --- INSTANT BOOLEAN TOGGLE ---
                                                 let new_val = if field.default_value == "true" { "false".to_string() } else { "true".to_string() };
-                                                
+
                                                 field.default_value = new_val.clone(); // Optimistic UI update
-                                                
+
                                                 let _ = tx_to_bot.send(AdminCommand::SaveConfig {
                                                     plugin: plugin_name.clone(),
                                                     key: field.key.clone(),

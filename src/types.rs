@@ -35,6 +35,22 @@ pub enum AdminCommand {
         key: String,
         value: String,
     },
+    AppendListItem {
+        plugin: String,
+        key: String,
+        item: HashMap<String, String>,
+    },
+    UpdateListItem {
+        plugin: String,
+        key: String,
+        index: usize,
+        item: HashMap<String, String>,
+    },
+    DeleteListItem {
+        plugin: String,
+        key: String,
+        index: usize,
+    },
 }
 
 // ------------------------------------------------------------------
@@ -53,7 +69,7 @@ pub struct Data {
 }
 
 // Configuration Types
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ConfigType {
     String,
     Number,
@@ -61,6 +77,15 @@ pub enum ConfigType {
     Channel,
     Role,
     Category,
+    List,
+}
+
+// Schema for a sub-field within a List config item
+#[derive(Clone, Debug)]
+pub struct ConfigItemSchema {
+    pub key: String,
+    pub name: String,
+    pub field_type: ConfigType, // Any type except List (no nesting)
 }
 
 #[derive(Clone, Debug)]
@@ -86,7 +111,9 @@ pub struct ConfigField {
     pub name: String,           // e.g., "Welcome Channel"
     pub description: String,    // e.g., "The ID of the channel to send welcome messages in"
     pub field_type: ConfigType, // e.g., ConfigType::String
-    pub default_value: String,  // e.g., ""
+    pub default_value: String,  // e.g., "" (unused for List fields)
+    pub item_schema: Vec<ConfigItemSchema>,          // for List fields: sub-field definitions
+    pub list_items: Vec<HashMap<String, String>>,    // for List fields: current items (in-memory)
 }
 
 // The full schema for a single plugin

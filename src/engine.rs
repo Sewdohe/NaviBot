@@ -1,5 +1,6 @@
 use crate::types::{BotEvent, Data, Error, LogLevel};
-use crate::types::{ConfigField, ConfigRegistry, ConfigType, PluginSchema};
+use crate::types::{ConfigField, ConfigItemSchema, ConfigRegistry, ConfigType, PluginSchema};
+use std::collections::HashMap;
 use mlua::prelude::*;
 use mlua::Function;
 use mlua::{LuaOptions, StdLib};
@@ -618,7 +619,7 @@ pub async fn init(
 
     navi.set(
         "register_config",
-        lua.create_function(move |_, (plugin_name, schema): (String, mlua::Table)| {
+        lua.create_function(move |lua_inner, (plugin_name, schema): (String, mlua::Table)| {
             let mut fields = Vec::new();
 
             for pair in schema.pairs::<mlua::Integer, mlua::Table>() {
@@ -645,34 +646,113 @@ pub async fn init(
                     "channel" => ConfigType::Channel,
                     "role" => ConfigType::Role,
                     "category" => ConfigType::Category,
+                    "list" => ConfigType::List,
                     _ => ConfigType::String,
                 };
 
-                // DIRECT SQLITE ACCESS - Safely read from the database to see if a value exists
-                let db_key = format!("config:{}:{}", plugin_name, key);
-                let mut actual_value: Option<String> = None;
-
-                if let Ok(conn) = db_for_config.lock() {
-                    if let Ok(mut stmt) = conn.prepare("SELECT value FROM kv_store WHERE key = ?1")
-                    {
-                        actual_value = stmt
-                            .query_row([&db_key], |row| row.get(0))
-                            .optional()
-                            .unwrap_or(None);
-                    }
-                }
-
-                // Use the actual DB value, or fallback to default (and save the default!)
-                let final_value = if let Some(val) = actual_value {
-                    val
+                // Parse item_schema for List fields
+                let item_schema: Vec<ConfigItemSchema> = if field_type == ConfigType::List {
+                    let schema_table: mlua::Table = field_table
+                        .get("item_schema")
+                        .unwrap_or_else(|_| lua_inner.create_table().unwrap());
+                    schema_table
+                        .pairs::<mlua::Integer, mlua::Table>()
+                        .filter_map(|p| p.ok())
+                        .map(|(_, t)| {
+                            let sub_key: String = t.get("key").unwrap_or_default();
+                            let sub_name: String =
+                                t.get("name").unwrap_or_else(|_| sub_key.clone());
+                            let sub_type_str: String =
+                                t.get("type").unwrap_or_else(|_| "string".into());
+                            let sub_type = match sub_type_str.as_str() {
+                                "number" => ConfigType::Number,
+                                "boolean" => ConfigType::Boolean,
+                                "channel" => ConfigType::Channel,
+                                "role" => ConfigType::Role,
+                                "category" => ConfigType::Category,
+                                _ => ConfigType::String,
+                            };
+                            ConfigItemSchema {
+                                key: sub_key,
+                                name: sub_name,
+                                field_type: sub_type,
+                            }
+                        })
+                        .collect()
                 } else {
-                    if let Ok(conn) = db_for_config.lock() {
-                        let _ = conn.execute(
-                            "INSERT OR REPLACE INTO kv_store (key, value) VALUES (?1, ?2)",
-                            (&db_key, &default_value),
-                        );
+                    vec![]
+                };
+
+                // Load existing list items from DB for List fields
+                let list_items: Vec<HashMap<String, String>> = if field_type == ConfigType::List {
+                    let count_key = format!("config:{}:{}:_count", plugin_name, key);
+                    let count: usize = if let Ok(conn) = db_for_config.lock() {
+                        conn.query_row(
+                            "SELECT value FROM kv_store WHERE key = ?1",
+                            [&count_key],
+                            |row| row.get::<_, String>(0),
+                        )
+                        .optional()
+                        .unwrap_or(None)
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or(0)
+                    } else {
+                        0
+                    };
+
+                    (0..count)
+                        .filter_map(|i| {
+                            let item_key = format!("config:{}:{}:{}", plugin_name, key, i);
+                            if let Ok(conn) = db_for_config.lock() {
+                                conn.query_row(
+                                    "SELECT value FROM kv_store WHERE key = ?1",
+                                    [&item_key],
+                                    |row| row.get::<_, String>(0),
+                                )
+                                .optional()
+                                .ok()
+                                .flatten()
+                                .and_then(|json| {
+                                    serde_json::from_str::<HashMap<String, String>>(&json).ok()
+                                })
+                            } else {
+                                None
+                            }
+                        })
+                        .collect()
+                } else {
+                    vec![]
+                };
+
+                // DIRECT SQLITE ACCESS - Safely read from the database to see if a value exists
+                // (only for scalar fields; List fields use list_items above)
+                let final_value = if field_type != ConfigType::List {
+                    let db_key = format!("config:{}:{}", plugin_name, key);
+                    let actual_value: Option<String> = if let Ok(conn) = db_for_config.lock() {
+                        conn.query_row(
+                            "SELECT value FROM kv_store WHERE key = ?1",
+                            [&db_key],
+                            |row| row.get::<_, String>(0),
+                        )
+                        .optional()
+                        .unwrap_or(None)
+                    } else {
+                        None
+                    };
+
+                    if let Some(val) = actual_value {
+                        val
+                    } else {
+                        if let Ok(conn) = db_for_config.lock() {
+                            let _ = conn.execute(
+                                "INSERT OR REPLACE INTO kv_store (key, value) VALUES (?1, ?2)",
+                                (&db_key, &default_value),
+                            );
+                        }
+                        default_value.clone()
                     }
-                    default_value.clone()
+                } else {
+                    String::new()
                 };
 
                 fields.push(ConfigField {
@@ -681,6 +761,8 @@ pub async fn init(
                     description,
                     field_type,
                     default_value: final_value,
+                    item_schema,
+                    list_items,
                 });
             }
 
@@ -738,11 +820,25 @@ pub async fn init(
         })?,
     )?;
 
+    // JSON decode: string -> Lua table (used by get_list)
+    navi.set(
+        "_json_decode",
+        lua.create_function(|lua, json: String| {
+            let map: HashMap<String, String> =
+                serde_json::from_str(&json).map_err(mlua::Error::external)?;
+            let t = lua.create_table()?;
+            for (k, v) in map {
+                t.set(k, v)?;
+            }
+            Ok(t)
+        })?,
+    )?;
+
     // 2. Build the Smart Lua Wrapper
     lua.load(
         r#"
         navi.db = {}
-        
+
         function navi.db.set(key, value)
             if not string.find(key, ":") then
                 local info = debug.getinfo(2, "S")
@@ -766,6 +862,28 @@ pub async fn init(
         -- NEW: Pass the SQL string directly to the raw pipe
         function navi.db.query(sql)
             return navi._db_query_raw(sql)
+        end
+
+        -- Read all items of a list config field
+        -- Keys are stored as config:plugin:key:N in the DB, matching SaveConfig's convention
+        function navi.db.get_list(key)
+            if not string.find(key, ":") then
+                local info = debug.getinfo(2, "S")
+                local src = info and info.short_src or "unknown"
+                src = src:match('"([^"]+)"') or src
+                src = src:gsub("plugins[/\\]", "")
+                local plugin = src:match("([^/\\]+)%.lua$") or "global"
+                key = "config:" .. plugin .. ":" .. key
+            end
+            local count = tonumber(navi._db_get_raw(key .. ":_count")) or 0
+            local result = {}
+            for i = 0, count - 1 do
+                local json = navi._db_get_raw(key .. ":" .. i)
+                if json then
+                    table.insert(result, navi._json_decode(json))
+                end
+            end
+            return result
         end
     "#,
     )

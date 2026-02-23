@@ -1,102 +1,93 @@
 print("--- Loading Reaction Roles Plugin ---")
 
--- 1. Register the Config Schema
-navi.register_config("reaction_roles", {{
-    key = "channel_id",
-    name = "Menu Channel",
-    description = "The channel to spawn the role menu in",
-    type = "channel",
-    default = ""
-}, {
-    key = "role_1_name",
-    name = "Role 1 Name",
-    description = "The name shown in the dropdown",
-    type = "string",
-    default = "Announcements"
-}, {
-    key = "role_1_id",
-    name = "Role 1 ID",
-    description = "The actual Discord Role ID",
-    type = "role",
-    default = ""
-}, {
-    key = "role_2_name",
-    name = "Role 2 Name",
-    description = "The name shown in the dropdown",
-    type = "string",
-    default = "Events"
-}, {
-    key = "role_2_id",
-    name = "Role 2 ID",
-    description = "The actual Discord Role ID",
-    type = "role",
-    default = ""
-}})
+-- 1. Register Config Schema
+navi.register_config("reaction_roles", {
+    {
+        key = "channel_id",
+        name = "Menu Channel",
+        description = "The channel to spawn the role menu in",
+        type = "channel",
+        default = ""
+    },
+    {
+        key = "mappings",
+        name = "Role Mappings",
+        description = "Each entry defines one option in the dropdown",
+        type = "list",
+        item_schema = {
+            { key = "name",    name = "Display Name", type = "string" },
+            { key = "role_id", name = "Role",         type = "role"   }
+        }
+    }
+})
 
 -- 2. Slash Command to Spawn the Menu
 navi.create_slash("spawn_roles", "Spawns the self-assign role menu", {},
----@param ctx NaviSlashCtx
-function(ctx)
-    local channel_id = navi.db.get("config:reaction_roles:channel_id")
+    ---@param ctx NaviSlashCtx
+    function(ctx)
+        local channel_id = navi.db.get("config:reaction_roles:channel_id")
 
-    if channel_id == "" or channel_id == nil then
-        ctx.reply("❌ Please configure the Menu Channel in the TUI first!", true)
-        return
-    end
+        if channel_id == nil or channel_id == "" then
+            ctx.reply("❌ Please configure the Menu Channel in the TUI first!")
+            return
+        end
 
-    local r1_name = navi.db.get("config:reaction_roles:role_1_name") or "Role 1"
-    local r2_name = navi.db.get("config:reaction_roles:role_2_name") or "Role 2"
+        local mappings = navi.db.get_list("mappings")
 
-    -- Spawn the Dropdown Menu!
-    navi.send_message(channel_id, {
-        title = "🎭 Self-Assign Roles",
-        description = "Use the dropdown menu below to select the roles you want.",
-        color = 0x9B59B6,
-        components = {{
-            type = "select",
-            id = "role_dropdown",
-            placeholder = "Pick a role...",
-            options = {{
-                label = r1_name,
-                value = "role_1",
-                description = "Click to receive " .. r1_name,
-                emoji = "✨"
-            }, {
-                label = r2_name,
-                value = "role_2",
-                description = "Click to receive " .. r2_name,
-                emoji = "🔥"
+        if #mappings == 0 then
+            ctx.reply("❌ No role mappings configured yet. Add some in the TUI config!")
+            return
+        end
+
+        -- Build dropdown options from the list
+        local options = {}
+        for i, entry in ipairs(mappings) do
+            local display = entry.name or ("Role " .. i)
+            table.insert(options, {
+                label = display,
+                value = tostring(i - 1),   -- 0-based index matched in component handler
+                description = "Click to receive the " .. display .. " role",
+                emoji = "🎭"
+            })
+        end
+
+        navi.send_message(channel_id, {
+            title = "🎭 Self-Assign Roles",
+            description = "Use the dropdown below to pick a role.",
+            color = 0x9B59B6,
+            components = {{
+                type = "select",
+                id = "role_dropdown",
+                placeholder = "Pick a role...",
+                options = options
             }}
-        }}
-    })
+        })
 
-    ctx.reply("✅ Role menu spawned successfully!", true)
-end)
-
--- 3. Handle the Dropdown Selection (Using the new clean API!)
-navi.register_component("role_dropdown", 
----@param ctx NaviComponentCtx
-function(ctx)
-    local choice = ctx.values[1]
-    local role_id = ""
-    local role_name = ""
-
-    -- Match their choice to the TUI config
-    if choice == "role_1" then
-        role_id = navi.db.get("config:reaction_roles:role_1_id")
-        role_name = navi.db.get("config:reaction_roles:role_1_name")
-    elseif choice == "role_2" then
-        role_id = navi.db.get("config:reaction_roles:role_2_id")
-        role_name = navi.db.get("config:reaction_roles:role_2_name")
+        ctx.reply("✅ Role menu spawned in <#" .. channel_id .. ">!")
     end
+)
 
-    -- Safety check
-    if role_id == "" or role_id == nil then
-        ctx.reply("❌ This role hasn't been fully configured by the admin yet.", true)
+-- 3. Handle Dropdown Selection
+---@param ctx NaviComponentCtx
+local function on_role_dropdown(ctx)
+    local choice = ctx.values[1]
+    local idx = tonumber(choice)
+
+    if idx == nil then
+        ctx.reply("❌ Invalid selection.", true)
         return
     end
 
-    -- Give them the role!
-    navi.add_role(ctx.guild_id, ctx.user_id, role_id)
-    ctx.reply("✅ You have been given the **" .. role_name .. "** role!", true)
-end)
+    local mappings = navi.db.get_list("mappings")
+    local entry = mappings[idx + 1]   -- convert 0-based back to 1-based Lua index
+
+    if entry == nil or entry.role_id == nil or entry.role_id == "" then
+        ctx.reply("❌ This role hasn't been configured by an admin yet.", true)
+        return
+    end
+
+    navi.add_role(ctx.guild_id, ctx.user_id, entry.role_id)
+    ctx.reply("✅ You've been given the **" .. (entry.name or "role") .. "** role!", true)
+end
+
+navi.register_component("role_dropdown", on_role_dropdown)

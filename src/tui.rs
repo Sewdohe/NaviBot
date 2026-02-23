@@ -109,17 +109,32 @@ pub fn run(
                     .split(main_chunks[1]); // Uses the space below the header
 
                 // 1. Map them directly to `Line` objects instead of `ListItem`
+                let plugin_style = Style::default().fg(Color::Magenta);
                 let log_lines: Vec<Line> = logs.iter().map(|(level, msg)| {
                         let (prefix, style) = match level {
                             LogLevel::Error => ("[E]", Style::default().fg(Color::Red)),
                             LogLevel::Warn  => ("[W]", Style::default().fg(Color::Yellow)),
                             LogLevel::Info  => ("[I]", Style::default().fg(Color::Cyan)),
                         };
-                        Line::from(vec![
-                            Span::styled(prefix, style),
-                            Span::raw(" "),
-                            Span::styled(msg.clone(), style),
-                        ])
+                        // If the message starts with [plugin-name], colour that part purple
+                        let spans = if msg.starts_with('[') {
+                            if let Some(close) = msg.find(']') {
+                                let tag  = &msg[..=close];           // "[counting.lua]"
+                                let rest = msg[close+1..].trim_start();
+                                vec![
+                                    Span::styled(prefix, style),
+                                    Span::raw(" "),
+                                    Span::styled(tag.to_string(), plugin_style),
+                                    Span::raw(" "),
+                                    Span::styled(rest.to_string(), style),
+                                ]
+                            } else {
+                                vec![Span::styled(prefix, style), Span::raw(" "), Span::styled(msg.clone(), style)]
+                            }
+                        } else {
+                            vec![Span::styled(prefix, style), Span::raw(" "), Span::styled(msg.clone(), style)]
+                        };
+                        Line::from(spans)
                     }).collect();
                 
                 // Calculate scroll bounds

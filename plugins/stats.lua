@@ -15,6 +15,7 @@ navi.on("ticket_created", function(user_id)
 end)
 
 navi.on("message", function(msg)
+    navi.log.info("a message was sent")
     local user_id = msg.author_id  -- available for future use
     local current = tonumber(navi.db.get("stats:total_messages")) or 0
     navi.db.set("stats:total_messages", tostring(current + 1))

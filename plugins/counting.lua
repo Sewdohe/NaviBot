@@ -1,4 +1,4 @@
-print("--- Loading Counting Game Plugin ---")
+navi.log.info("Loading Counting Game Plugin")
 
 -- 1. Register Configuration for the TUI Dashboard
 navi.register_config("counting", {

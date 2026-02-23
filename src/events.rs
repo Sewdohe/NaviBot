@@ -1,4 +1,4 @@
-use crate::types::{Data, Error};
+use crate::types::{Data, Error, LogLevel};
 use mlua::{Function, Table};
 use poise::serenity_prelude as serenity;
 
@@ -53,7 +53,7 @@ pub async fn event_handler(
                 msg_table.set("attachments", attachments)?;
 
                 if let Err(e) = f.call::<_, ()>(msg_table) {
-                    let _ = data.tui_tx.send(crate::types::BotEvent::Log(format!("❌ Lua Error: {}", e)));
+                    let _ = data.tui_tx.send(crate::types::BotEvent::Log(LogLevel::Error, format!("Lua Error: {}", e)));
                 }
             }
         }
@@ -151,7 +151,7 @@ pub async fn event_handler(
                                     .create_interaction_response(id, &token, &response, vec![])
                                     .await
                                 {
-                                    let _ = tx.send(crate::types::BotEvent::Log(format!("Error replying: {}", e)));
+                                    let _ = tx.send(crate::types::BotEvent::Log(LogLevel::Error, format!("Error replying: {}", e)));
                                 }
                             });
                             Ok(())
@@ -160,7 +160,7 @@ pub async fn event_handler(
                         if let Ok(reply) = reply_fn {
                             let _ = ctx_table.set("reply", reply);
                             if let Err(e) = func.call::<_, ()>(ctx_table) {
-                                let _ = data.tui_tx.send(crate::types::BotEvent::Log(format!("❌ Lua Slash Error: {}", e)));
+                                let _ = data.tui_tx.send(crate::types::BotEvent::Log(LogLevel::Error, format!("Lua Slash Error: {}", e)));
                             }
                         }
                     }
@@ -183,18 +183,18 @@ pub async fn event_handler(
                     let _ = table.set("emoji", add_reaction.emoji.to_string());
                     
                     if let Err(e) = callback.call::<_, ()>(table) {
-                        let _ = data.tui_tx.send(crate::types::BotEvent::Log(format!("❌ Lua Reaction Error: {}", e)));
+                        let _ = data.tui_tx.send(crate::types::BotEvent::Log(LogLevel::Error, format!("Lua Reaction Error: {}", e)));
                     }
                 }
             };
-        } 
+        }
     }
 
     // 4. REACTION REMOVE HANDLER
     if let serenity::FullEvent::ReactionRemove { removed_reaction } = event {
         {
             let ctx_lua = data.lua.lock().unwrap();
-            
+
             if let Ok(callback) = ctx_lua.globals().get::<_, mlua::Function>("on_reaction_remove") {
                 if let Ok(table) = ctx_lua.create_table() {
                     let _ = table.set("user_id", removed_reaction.user_id.map(|u| u.get().to_string()));
@@ -204,7 +204,7 @@ pub async fn event_handler(
                     let _ = table.set("emoji", removed_reaction.emoji.to_string());
 
                     if let Err(e) = callback.call::<_, ()>(table) {
-                        let _ = data.tui_tx.send(crate::types::BotEvent::Log(format!("❌ Lua Reaction Error: {}", e)));
+                        let _ = data.tui_tx.send(crate::types::BotEvent::Log(LogLevel::Error, format!("Lua Reaction Error: {}", e)));
                     }
                 }
             };
@@ -213,21 +213,25 @@ pub async fn event_handler(
 
     // Member join events
     if let serenity::FullEvent::GuildMemberAddition { new_member } = event {
-        // 1. Log to the TUI 
-        let _ = data.tui_tx.send(crate::types::BotEvent::UserJoined(new_member.user.name.clone()));
-        
+        // 1. Log to the TUI
+        let _ = data.tui_tx.send(crate::types::BotEvent::Log(
+            LogLevel::Info,
+            format!("👋 User Joined: {}", new_member.user.name),
+        ));
+
         // 2. Trigger the Lua function safely
         let lua = data.lua.lock().unwrap();
         if let Ok(func) = lua.globals().get::<_, mlua::Function>("on_member_join") {
             // Check for errors instead of ignoring them!
             if let Err(e) = func.call::<_, ()>((
-                new_member.user.id.get().to_string(), 
+                new_member.user.id.get().to_string(),
                 new_member.user.name.clone(),
                 new_member.guild_id.get().to_string()
             )) {
                 // Send the exact Lua crash log to the TUI so we can debug it
                 let _ = data.tui_tx.send(crate::types::BotEvent::Log(
-                    format!("❌ Greeter Crash: {}", e)
+                    LogLevel::Error,
+                    format!("Greeter Crash: {}", e)
                 ));
             }
         };
@@ -262,7 +266,8 @@ pub async fn event_handler(
         state.roles.sort_by(|a, b| a.name.cmp(&b.name));
         
         let _ = data.tui_tx.send(crate::types::BotEvent::Log(
-            format!("📡 Cached {} channels, {} categories, {} roles.", 
+            LogLevel::Info,
+            format!("Cached {} channels, {} categories, {} roles.",
                 state.channels.len(), state.categories.len(), state.roles.len())
         ));
     }
@@ -311,14 +316,14 @@ pub async fn event_handler(
                                 let resp = serenity::CreateInteractionResponse::Message(data);
                                 
                                 if let Err(e) = h.create_interaction_response(interaction_id, &t, &resp, vec![]).await {
-                                    let _ = tx.send(crate::types::BotEvent::Log(format!("Error replying to component: {}", e)));
+                                    let _ = tx.send(crate::types::BotEvent::Log(LogLevel::Error, format!("Error replying to component: {}", e)));
                                 }
                             });
                             Ok(())
                         })?)?;
 
                         if let Err(e) = callback.call::<_, ()>(table) {
-                            let _ = data.tui_tx.send(crate::types::BotEvent::Log(format!("❌ Lua Component Error: {}", e)));
+                            let _ = data.tui_tx.send(crate::types::BotEvent::Log(LogLevel::Error, format!("Lua Component Error: {}", e)));
                         }
                     }
                 };

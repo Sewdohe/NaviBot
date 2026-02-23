@@ -6,13 +6,20 @@ use std::{
 };
 use tokio::sync::mpsc::UnboundedSender;
 
+// Log levels for structured TUI output
+#[derive(Debug, Clone)]
+pub enum LogLevel {
+    Info,
+    Warn,
+    Error,
+}
+
 // Events: Bot -> TUI
 // "Hey TUI, this just happened"
 #[derive(Debug)]
 pub enum BotEvent {
-    Log(String),
+    Log(LogLevel, String),
     // Status { uptime: String, shard_id: u32 },
-    UserJoined(String),
 }
 
 // Commands: TUI -> Bot

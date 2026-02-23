@@ -1,4 +1,4 @@
-print("--- Loading Greeter Plugin ---")
+navi.log.info("Loading Greeter Plugin")
 
 -- 1. Register the Config Schema for the TUI
 navi.register_config("greeter", {
@@ -23,7 +23,7 @@ navi.on("member_join", function(data)
 
     local channel_id = navi.db.get("config:greeter:channel_id")
     if channel_id == "" or channel_id == nil then
-        print("Greeter triggered, but no channel is configured!")
+        navi.log.warn("Greeter triggered but no channel is configured")
         return 
     end
 

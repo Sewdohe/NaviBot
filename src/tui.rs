@@ -1,4 +1,4 @@
-use crate::types::{AdminCommand, BotEvent, ConfigRegistry, SharedDiscordState, ConfigType};
+use crate::types::{AdminCommand, BotEvent, ConfigRegistry, LogLevel, SharedDiscordState, ConfigType};
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
     execute,
@@ -42,7 +42,7 @@ pub fn run(
     let mut terminal = Terminal::new(backend)?;
 
     // 2. STATE
-    let mut logs: Vec<String> = Vec::new();
+    let mut logs: Vec<(LogLevel, String)> = Vec::new();
     let mut input_mode = false;
     let mut input_buffer = String::new();
 
@@ -65,9 +65,7 @@ pub fn run(
         // A. Handle Bot Events (Non-blocking)
         while let Ok(event) = rx_from_bot.try_recv() {
             match event {
-                BotEvent::Log(s) => logs.push(s),
-                BotEvent::UserJoined(u) => logs.push(format!("👋 User Joined: {}", u)),
-                // _ => {}
+                BotEvent::Log(level, s) => logs.push((level, s)),
             }
         }
         // Keep log size manageable
@@ -108,24 +106,17 @@ pub fn run(
                     .split(main_chunks[1]); // Uses the space below the header
 
                 // 1. Map them directly to `Line` objects instead of `ListItem`
-                let log_lines: Vec<Line> = logs.iter().map(|msg| {
-                        let style = if msg.contains("❌") || msg.to_lowercase().contains("error") {
-                            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
-                        } else if msg.contains("✅") {
-                            Style::default().fg(Color::Green)
-                        } else if msg.contains("⚠️") {
-                            Style::default().fg(Color::Yellow)
-                        } else if msg.contains("⚙️") || msg.contains("📡") || msg.contains("💾") {
-                            Style::default().fg(Color::Cyan)
-                        } else if msg.contains("👋") {
-                            Style::default().fg(Color::LightMagenta).add_modifier(Modifier::BOLD)
-                        } else if msg.starts_with("[") && msg.contains("]") { 
-                            Style::default().fg(Color::LightBlue)
-                        } else {
-                            Style::default().fg(Color::Gray)
+                let log_lines: Vec<Line> = logs.iter().map(|(level, msg)| {
+                        let (prefix, style) = match level {
+                            LogLevel::Error => ("[E]", Style::default().fg(Color::Red)),
+                            LogLevel::Warn  => ("[W]", Style::default().fg(Color::Yellow)),
+                            LogLevel::Info  => ("[I]", Style::default().fg(Color::Cyan)),
                         };
-
-                        Line::from(Span::styled(msg, style))
+                        Line::from(vec![
+                            Span::styled(prefix, style),
+                            Span::raw(" "),
+                            Span::styled(msg.clone(), style),
+                        ])
                     }).collect();
                 
                 // --- NEW: Dynamically calculate the safe scroll distance ---
@@ -348,7 +339,7 @@ pub fn run(
                 if input_mode {
                     match key.code {
                         KeyCode::Enter => {
-                            logs.push(format!("You typed: {}", input_buffer));
+                            logs.push((LogLevel::Info, format!("You typed: {}", input_buffer)));
                             input_buffer.clear();
                             input_mode = false;
                         }

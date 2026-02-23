@@ -1,4 +1,4 @@
-print("--- Loading Core: Event Bus ---")
+navi.log.info("Loading Core: Event Bus")
 
 navi._events = {}
 
@@ -18,7 +18,7 @@ navi.emit = function(event_name, data)
       -- Run safely so one bad plugin doesn't crash the bus
       local success, err = pcall(callback, data)
       if not success then
-        print("⚠️ Event Bus Error (" .. event_name .. "): " .. tostring(err))
+        navi.log.warn("Event Bus Error (" .. event_name .. "): " .. tostring(err))
       end
     end
   end

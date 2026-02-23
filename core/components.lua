@@ -1,4 +1,4 @@
-print("--- Loading Component Manager ---")
+navi.log.info("Loading Component Manager")
 
 navi._components = {}
 
@@ -13,9 +13,9 @@ function on_component(ctx)
         local success, err = pcall(handler, ctx)
         if not success then
             ctx.reply("❌ Component Error: " .. tostring(err), true)
-            print("Component Error (" .. ctx.custom_id .. "): " .. tostring(err))
+            navi.log.error("Component Error (" .. ctx.custom_id .. "): " .. tostring(err))
         end
     else
-        print("⚠️ Unhandled component interaction: " .. ctx.custom_id)
+        navi.log.warn("Unhandled component interaction: " .. ctx.custom_id)
     end
 end

@@ -1,4 +1,4 @@
-use crate::types::{BotEvent, Data, Error};
+use crate::types::{BotEvent, Data, Error, LogLevel};
 use crate::types::{ConfigField, ConfigRegistry, ConfigType, PluginSchema};
 use mlua::prelude::*;
 use mlua::Function;
@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc::UnboundedSender;
 
 // --- HELPER: Load Plugins ---
-pub fn load_plugins(lua: &Lua) -> String {
+pub fn load_plugins(lua: &Lua) -> (LogLevel, String) {
     // 1. Reset Event Bus
     let result: LuaResult<()> = (|| {
         let navi: LuaTable = lua.globals().get("navi")?;
@@ -20,7 +20,7 @@ pub fn load_plugins(lua: &Lua) -> String {
     })();
 
     if let Err(e) = result {
-        return format!("❌ Failed to reset listeners: {}", e);
+        return (LogLevel::Error, format!("Failed to reset listeners: {}", e));
     }
 
     // 2. Read Files
@@ -29,7 +29,7 @@ pub fn load_plugins(lua: &Lua) -> String {
     let mut error_msg = None;
 
     if !Path::new("plugins").exists() {
-        return "⚠️ 'plugins/' folder not found!".to_string();
+        return (LogLevel::Warn, "'plugins/' folder not found!".to_string());
     }
 
     // --- BAKE IN THE CORE ENGINE API ---
@@ -62,7 +62,7 @@ pub fn load_plugins(lua: &Lua) -> String {
             if let Ok(code) = std::fs::read_to_string(&p) {
                 let chunk = lua.load(&code).set_name(p.to_string_lossy());
                 if let Err(e) = chunk.exec() {
-                    error_msg = Some(format!("❌ Error in {:?}: \n{}", p, e));
+                    error_msg = Some(format!("Error in {:?}: \n{}", p, e));
                     break;
                 }
                 count += 1;
@@ -72,9 +72,9 @@ pub fn load_plugins(lua: &Lua) -> String {
     }
 
     if let Some(err) = error_msg {
-        err
+        (LogLevel::Error, err)
     } else {
-        format!("✅ Loaded {} plugins.", count)
+        (LogLevel::Info, format!("Loaded {} plugins.", count))
     }
 }
 
@@ -144,7 +144,7 @@ pub async fn init(
     config_registry: ConfigRegistry,
     discord_state: crate::types::SharedDiscordState,
 ) -> Result<Data, Error> {
-    let _ = tui_tx.send(BotEvent::Log("--- Engine Initialization ---".into()));
+    let _ = tui_tx.send(BotEvent::Log(LogLevel::Info, "--- Engine Initialization ---".into()));
 
     let libs = StdLib::ALL_SAFE | StdLib::DEBUG;
     let lua = unsafe { Lua::unsafe_new_with(libs, LuaOptions::default()) };
@@ -163,14 +163,27 @@ pub async fn init(
     lua.globals().set("navi", navi.clone())?; // <--- INJECT IT IMMEDIATELY
 
     // --- LOGGING ---
-    let tx_log = tui_tx.clone();
-    navi.set(
-        "log",
-        lua.create_function(move |_, msg: String| {
-            let _ = tx_log.send(BotEvent::Log(msg));
-            Ok(())
-        })?,
-    )?;
+    let navi_log = lua.create_table()?;
+
+    let tx_info = tui_tx.clone();
+    navi_log.set("info", lua.create_function(move |_, msg: String| {
+        let _ = tx_info.send(BotEvent::Log(LogLevel::Info, msg));
+        Ok(())
+    })?)?;
+
+    let tx_warn = tui_tx.clone();
+    navi_log.set("warn", lua.create_function(move |_, msg: String| {
+        let _ = tx_warn.send(BotEvent::Log(LogLevel::Warn, msg));
+        Ok(())
+    })?)?;
+
+    let tx_err = tui_tx.clone();
+    navi_log.set("error", lua.create_function(move |_, msg: String| {
+        let _ = tx_err.send(BotEvent::Log(LogLevel::Error, msg));
+        Ok(())
+    })?)?;
+
+    navi.set("log", navi_log)?;
 
     lua.load(
         r#"
@@ -185,7 +198,7 @@ pub async fn init(
             local info = debug.getinfo(2, "S")
             local source = info and info.short_src or "Unknown"
             source = source:gsub("plugins[/\\]", "")
-            navi.log(string.format("[%s] %s", source, msg))
+            navi.log.info(string.format("[%s] %s", source, msg))
         end
     "#,
     )
@@ -234,7 +247,7 @@ pub async fn init(
         tokio::spawn(async move {
             let channel = serenity::ChannelId::new(channel_id);
             if let Err(e) = channel.say(&http, text).await {
-                let _ = tx.send(BotEvent::Log(format!("Error sending message: {}", e)));
+                let _ = tx.send(BotEvent::Log(LogLevel::Error, format!("Error sending message: {}", e)));
             }
         });
         Ok(())
@@ -370,7 +383,7 @@ pub async fn init(
                     let r_id = serenity::RoleId::new(role_id.parse().unwrap_or(0));
 
                     if let Err(e) = http.add_member_role(g_id, u_id, r_id, None).await {
-                        let _ = tx.send(BotEvent::Log(format!("Failed to add role: {}", e)));
+                        let _ = tx.send(BotEvent::Log(LogLevel::Error, format!("Failed to add role: {}", e)));
                     }
                 });
                 Ok(())
@@ -393,7 +406,7 @@ pub async fn init(
                     let r_id = serenity::RoleId::new(role_id.parse().unwrap_or(0));
 
                     if let Err(e) = http.remove_member_role(g_id, u_id, r_id, None).await {
-                        let _ = tx.send(BotEvent::Log(format!("Failed to remove role: {}", e)));
+                        let _ = tx.send(BotEvent::Log(LogLevel::Error, format!("Failed to remove role: {}", e)));
                     }
                 });
                 Ok(())
@@ -433,7 +446,7 @@ pub async fn init(
                         .unwrap_or(serenity::ReactionType::Unicode(emoji));
 
                     if let Err(e) = c_id.create_reaction(&http, m_id, reaction_type).await {
-                        let _ = tx.send(BotEvent::Log(format!("Failed to react: {}", e)));
+                        let _ = tx.send(BotEvent::Log(LogLevel::Error, format!("Failed to react: {}", e)));
                     }
                 });
                 Ok(())
@@ -571,7 +584,7 @@ pub async fn init(
 
                 let c_id = serenity::ChannelId::new(channel_id.parse().unwrap_or(0));
                 if let Err(e) = c_id.send_message(&http, msg).await {
-                    let _ = tx.send(BotEvent::Log(format!("Error sending message: {}", e)));
+                    let _ = tx.send(BotEvent::Log(LogLevel::Error, format!("Error sending message: {}", e)));
                 }
             });
             Ok(())
@@ -661,8 +674,8 @@ pub async fn init(
                 registry.insert(plugin_name.clone(), plugin_schema);
             }
 
-            let _ = tx_config.send(BotEvent::Log(format!(
-                "⚙️ Registered config schema for plugin: {}",
+            let _ = tx_config.send(BotEvent::Log(LogLevel::Info, format!(
+                "Registered config schema for plugin: {}",
                 plugin_name
             )));
 
@@ -830,8 +843,8 @@ pub async fn init(
     .exec()?;
 
     // 5. LOAD PLUGINS
-    let load_report = load_plugins(&lua);
-    let _ = tui_tx.send(BotEvent::Log(load_report));
+    let (load_level, load_report) = load_plugins(&lua);
+    let _ = tui_tx.send(BotEvent::Log(load_level, load_report));
 
     drop(navi); // <-- VERY IMPORTANT to drop this before we create the Data struct, otherwise we get a deadlock when trying to access it from the TUI!
 

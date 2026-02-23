@@ -12,7 +12,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 use tokio::sync::mpsc;
-use types::{AdminCommand, BotEvent};
+use types::{AdminCommand, BotEvent, LogLevel};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenv().ok();
@@ -91,8 +91,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     Err(e) => format!("Lua Read Error: {}", e),
                                 };
 
-                                let _ = tx_for_setup.send(BotEvent::Log(sync_report));
-                                let _ = tx_for_setup.send(BotEvent::Log("✅ Bot is Online!".into()));
+                                let _ = tx_for_setup.send(BotEvent::Log(LogLevel::Info, sync_report));
+                                let _ = tx_for_setup.send(BotEvent::Log(LogLevel::Info, "Bot is Online!".into()));
 
                                 // Send the Lua instance to the Admin Loop
                                 let _ = init_tx.send(data.lua.clone());
@@ -101,7 +101,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                             Err(e) => {
                                 let _ = tx_for_setup
-                                    .send(BotEvent::Log(format!("🔥 CRITICAL ERROR: {}", e)));
+                                    .send(BotEvent::Log(LogLevel::Error, format!("CRITICAL ERROR: {}", e)));
                                 Err(e)
                             }
                         }
@@ -131,20 +131,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 while let Some(cmd) = rx_from_tui_cmd.recv().await {
                     match cmd {
                         AdminCommand::Shutdown => {
-                            let _ = tx_for_loop.send(BotEvent::Log("🔴 Shutting down...".into()));
+                            let _ = tx_for_loop.send(BotEvent::Log(LogLevel::Info, "Shutting down...".into()));
                             shard_manager.shutdown_all().await;
                             break;
                         }
                         AdminCommand::Reload => {
-                            let report = {
+                            let (level, report) = {
                                 let lua = lua_instance.lock().unwrap();
                                 engine::load_plugins(&lua)
                             };
-                            let _ = tx_for_loop.send(BotEvent::Log(report));
+                            let _ = tx_for_loop.send(BotEvent::Log(level, report));
                         }
                         AdminCommand::RefreshCache => {
                             // Print the loading message
-                            let _ = tx_for_loop.send(BotEvent::Log("🔄 Fetching latest roles and channels...".into()));
+                            let _ = tx_for_loop.send(BotEvent::Log(LogLevel::Info, "Fetching latest roles and channels...".into()));
 
                             // Pass our cloned HTTP client directly into the thread
                             let http_clone = http_for_loop.clone(); 
@@ -198,12 +198,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         (state.channels.len(), state.categories.len(), state.roles.len())
                                     };
 
-                                    let _ = tx.send(BotEvent::Log(format!(
-                                        "✅ Cached {} channels, {} categories, {} roles.",
+                                    let _ = tx.send(BotEvent::Log(LogLevel::Info, format!(
+                                        "Cached {} channels, {} categories, {} roles.",
                                         c_count, cat_count, r_count
                                     )));
                                 } else {
-                                    let _ = tx.send(BotEvent::Log("❌ Failed to fetch Discord cache!".into()));
+                                    let _ = tx.send(BotEvent::Log(LogLevel::Error, "Failed to fetch Discord cache!".into()));
                                 }
                             });
                         }
@@ -229,8 +229,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                             }
 
-                            let _ = tx_for_loop.send(BotEvent::Log(format!(
-                                "💾 Saved config: {} -> {}",
+                            let _ = tx_for_loop.send(BotEvent::Log(LogLevel::Info, format!(
+                                "Saved config: {} -> {}",
                                 db_key, value
                             )));
                         }
@@ -238,7 +238,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             } else {
                 let _ = tx_for_loop.send(BotEvent::Log(
-                    "⚠️ Admin loop failed to capture Lua instance.".into(),
+                    LogLevel::Warn,
+                    "Admin loop failed to capture Lua instance.".into(),
                 ));
             }
         });

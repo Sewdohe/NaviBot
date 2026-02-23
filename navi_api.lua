@@ -145,9 +145,14 @@
 -- 🚀 THE GLOBAL NAVI API
 -------------------------------------------------------------------------------
 
+---@class NaviLogger
+---@field info fun(msg: string) @Sends an INFO-level message to the TUI log pane
+---@field warn fun(msg: string) @Sends a WARN-level message (yellow) to the TUI log pane
+---@field error fun(msg: string) @Sends an ERROR-level message (red) to the TUI log pane
+
 ---@class NaviCore
 ---@field db NaviDB @The SQLite key-value database interface
----@field log fun(msg: string) @Sends a string directly to the TUI log pane
+---@field log NaviLogger @Structured logger; use .info(), .warn(), .error()
 ---@field register fun(callback: fun(msg: NaviMsg)) @Registers a listener for every incoming chat message
 ---@field register_component fun(custom_id: string, callback: fun(ctx: NaviComponentCtx)) @Registers a handler for a button or select-menu interaction
 ---@field register_config fun(plugin_name: string, schema: NaviConfigItem[]) @Declares TUI-editable settings for a plugin; defaults are persisted to the DB automatically

@@ -1,17 +1,17 @@
-print("--- Loading Bot Statistics ---")
+navi.log.info("Loading Bot Statistics Plugin")
 
 -- 1. Listen for new members joining
 navi.on("member_join", function(data)
     local current = tonumber(navi.db.get("stats:total_joins")) or 0
     navi.db.set("stats:total_joins", tostring(current + 1))
-    print("📈 Stats: Logged new join for " .. data.username .. "! Total: " .. tostring(current + 1))
+    navi.log.info("Stats: new join for " .. data.username .. ", total: " .. tostring(current + 1))
 end)
 
 -- 2. Listen for tickets being opened
 navi.on("ticket_created", function(user_id)
     local current = tonumber(navi.db.get("stats:total_tickets")) or 0
     navi.db.set("stats:total_tickets", tostring(current + 1))
-    print("📈 Stats: Logged new ticket! Total: " .. tostring(current + 1))
+    navi.log.info("Stats: new ticket, total: " .. tostring(current + 1))
 end)
 
 navi.on("message", function(msg)

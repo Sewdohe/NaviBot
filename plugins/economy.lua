@@ -1,4 +1,4 @@
-print("--- Loading Economy Plugin ---")
+navi.log.info("Loading Economy Plugin")
 
 -- 1. Register Configuration for the TUI Dashboard
 navi.register_config("economy", {

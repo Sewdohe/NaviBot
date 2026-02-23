@@ -1,4 +1,4 @@
-print("--- Loading Verification Plugin ---")
+navi.log.info("Loading Verification Plugin")
 
 -- 1. Register Configuration for the TUI Dashboard
 navi.register_config("verification", {
@@ -69,6 +69,6 @@ navi.on("member_join", function(data)
 
   if unverified_role and unverified_role ~= "" then
     navi.add_role(data.guild_id, data.user_id, unverified_role)
-    navi.log("🛡️ Automatically quarantined new user: " .. data.username)
+    navi.log.info("Quarantined new member: " .. data.username)
   end
 end)

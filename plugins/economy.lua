@@ -67,8 +67,8 @@ navi.create_slash("pay", "Send money to another user", {
   },
   ---@param ctx NaviSlashCtx
   function(ctx)
-    local target_id = ctx.options.user
-    local amount = tonumber(ctx.options.amount)
+    local target_id = ctx.args.user
+    local amount = tonumber(ctx.args.amount)
     local currency = navi.db.get("config:economy:currency_name") or "Credits"
 
     -- Prevent infinite money exploits

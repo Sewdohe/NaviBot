@@ -36,6 +36,12 @@ end
 
 -- The bridge for new messages
 function on_message(msg)
-  -- Just broadcast the raw message table out to all plugins
+  -- Support navi.register() listeners
+  if navi.listeners then
+    for _, listener in ipairs(navi.listeners) do
+      pcall(listener, msg)
+    end
+  end
+  -- Support navi.on("message", ...) event bus subscribers
   navi.emit("message", msg)
 end

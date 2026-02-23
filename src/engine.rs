@@ -752,19 +752,6 @@ pub async fn init(
         })?,
     )?;
 
-    let commands = lua.create_table()?;
-    navi.set("commands", commands)?;
-
-    navi.set(
-        "create_command",
-        lua.create_function(|lua, (name, func): (String, Function)| {
-            let navi: LuaTable = lua.globals().get("navi")?;
-            let commands: LuaTable = navi.get("commands")?;
-            commands.set(name, func)?;
-            Ok(())
-        })?,
-    )?;
-
     let slash_cmds = lua.create_table()?;
     navi.set("slash_commands", slash_cmds)?;
 
@@ -789,6 +776,44 @@ pub async fn init(
     // we do this higher up now to make the table
     // available to the core API files that are loaded before the plugins, so they can also register commands and listeners
     // lua.globals().set("navi", navi)?;
+
+    // --- DISCORD CACHE BINDINGS ---
+    let state_roles = discord_state.clone();
+    navi.set(
+        "get_roles",
+        lua.create_function(move |lua, _guild_id: mlua::Value| {
+            let state = state_roles.lock().unwrap();
+            let result = lua.create_table()?;
+            for (i, role) in state.roles.iter().enumerate() {
+                let t = lua.create_table()?;
+                t.set("id", role.id.clone())?;
+                t.set("name", role.name.clone())?;
+                let color_t = lua.create_table()?;
+                color_t.set(1, role.color.0)?;
+                color_t.set(2, role.color.1)?;
+                color_t.set(3, role.color.2)?;
+                t.set("color", color_t)?;
+                result.set(i + 1, t)?;
+            }
+            Ok(result)
+        })?,
+    )?;
+
+    let state_channels = discord_state.clone();
+    navi.set(
+        "get_channels",
+        lua.create_function(move |lua, _guild_id: mlua::Value| {
+            let state = state_channels.lock().unwrap();
+            let result = lua.create_table()?;
+            for (i, (id, name)) in state.channels.iter().enumerate() {
+                let t = lua.create_table()?;
+                t.set("id", id.clone())?;
+                t.set("name", name.clone())?;
+                result.set(i + 1, t)?;
+            }
+            Ok(result)
+        })?,
+    )?;
 
     // 4. LOAD CONDUCTOR
     lua.load(

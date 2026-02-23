@@ -65,7 +65,7 @@ navi.register_component("btn_verify_human",
 
 -- 4. Automatically quarantine new users via the Event Bus
 navi.on("member_join", function(data)
-  local unverified_role = navi.db.get("unverified_role")
+  local unverified_role = navi.db.get("config:verification:unverified_role")
 
   if unverified_role and unverified_role ~= "" then
     navi.add_role(data.guild_id, data.user_id, unverified_role)

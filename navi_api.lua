@@ -116,6 +116,17 @@
 ---@field type "string"|"number"|"boolean"|"channel"|"role"|"category" @Controls the TUI input widget
 ---@field default string|number|boolean @Value written to the DB if the user has not configured it yet
 
+--- A Discord role from the cached guild state.
+---@class NaviRole
+---@field id string @The role's snowflake ID
+---@field name string @The role's display name
+---@field color integer[] @RGB tuple: {r, g, b}
+
+--- A Discord text channel from the cached guild state.
+---@class NaviChannel
+---@field id string @The channel's snowflake ID
+---@field name string @The channel's display name
+
 -------------------------------------------------------------------------------
 -- 🗄️ DATABASE API
 -------------------------------------------------------------------------------
@@ -141,7 +152,6 @@
 ---@field register_component fun(custom_id: string, callback: fun(ctx: NaviComponentCtx)) @Registers a handler for a button or select-menu interaction
 ---@field register_config fun(plugin_name: string, schema: NaviConfigItem[]) @Declares TUI-editable settings for a plugin; defaults are persisted to the DB automatically
 ---@field create_slash fun(name: string, description: string, options: table, callback: fun(ctx: NaviSlashCtx)) @Declares a slash command (run `!sync` to push it to Discord)
----@field create_command fun(name: string, callback: fun()) @Registers a named prefix-command handler stored in `navi.commands`
 ---@field on fun(event_name: string, callback: fun(data: any)) @Subscribes to an inter-plugin event bus event
 ---@field emit fun(event_name: string, data: any) @Publishes an event to all subscribers on the inter-plugin event bus
 ---@field say fun(channel_id: string|number, text: string) @Sends plain text to a channel
@@ -152,6 +162,8 @@
 ---@field add_role fun(guild_id: string, user_id: string, role_id: string) @Assigns a role to a member
 ---@field remove_role fun(guild_id: string, user_id: string, role_id: string) @Removes a role from a member
 ---@field set_status fun(activity_type: "playing"|"listening"|"watching"|"competing"|"custom"|"none", text: string) @Changes the bot's Discord presence
+---@field get_roles fun(guild_id: string|nil): NaviRole[] @Returns cached roles (call navi.refresh_cache or press u first)
+---@field get_channels fun(guild_id: string|nil): NaviChannel[] @Returns cached text channels
 
 ---@type NaviCore
 ---@diagnostic disable-next-line: missing-fields

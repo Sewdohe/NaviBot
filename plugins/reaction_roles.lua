@@ -87,6 +87,7 @@ local function on_role_dropdown(ctx)
     end
 
     navi.add_role(ctx.guild_id, ctx.user_id, entry.role_id)
+    navi.log.info("Gave the " .. entry.name .. " role to " .. ctx.username)
     ctx.reply("✅ You've been given the **" .. (entry.name or "role") .. "** role!", true)
 end
 

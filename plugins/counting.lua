@@ -27,6 +27,14 @@ local function set_last_counter(uid)
   navi.db.set("counting:last_counter", tostring(uid))
 end
 
+local function get_total_counts()
+  return tonumber(navi.db.get("counting:total_counts")) or 0
+end
+
+local function get_highest_count()
+  return tonumber(navi.db.get("counting:highest_count")) or 0
+end
+
 -- 2. Game Logic Listener
 navi.on("message", function(msg)
   local channel_id = tostring(msg.channel_id)
@@ -65,7 +73,7 @@ navi.on("message", function(msg)
   -- Check the rules!
   if attempt ~= next_num then
     failed = true
-    fail_reason = "Wrong number! The next number was **" .. next_num .. "**."
+    fail_reason = "Wrong number!"
   elseif not allow_consecutive and user_id == last_user then
     failed = true
     fail_reason = "You can't count twice in a row!"
@@ -73,27 +81,37 @@ navi.on("message", function(msg)
 
   -- Handle the outcome
   if failed then
-    -- Cast IDs to string explicitly to keep the Rust bridge happy
     navi.react(channel_id, tostring(msg.message_id), "❌")
 
-    -- Charge them money!
+    -- Charge them!
     local penalty = tonumber(navi.db.get("config:counting:penalty_amount")) or 5
     if penalty > 0 then
       navi.emit("economy:remove", { user_id = user_id, amount = penalty })
     end
 
     local restart = navi.db.get("config:counting:restart_on_fail") == "true"
-    local response = "🚨 <@" .. user_id .. "> ruined the count at **" .. current .. "**! " .. fail_reason
+    local next_correct
 
     if restart then
       set_current_count(0)
       set_last_counter("")
-      response = response .. " The count has been reset to 0."
+      next_correct = 1
+    else
+      next_correct = next_num
     end
 
+    local restart_line = restart
+      and "🔄 **Counting has been reset to 0.**"
+      or  "▶️ **Counting was NOT reset.**"
+
+    local description = "😬 <@" .. user_id .. "> ruined the count at **" .. current .. "**!\n"
+      .. "💥 " .. fail_reason .. "\n\n"
+      .. restart_line .. "\n"
+      .. "➡️ The next number is **" .. next_correct .. "**."
+
     navi.send_message(channel_id, {
-      title = "Count Ruined!",
-      description = response,
+      title = "❌ Count Ruined!",
+      description = description,
       color = 0xE74C3C -- Red
     })
   else
@@ -101,6 +119,13 @@ navi.on("message", function(msg)
     navi.react(channel_id, tostring(msg.message_id), "✅")
     set_current_count(next_num)
     set_last_counter(user_id)
+
+    -- Track stats
+    navi.db.set("counting:total_counts", tostring(get_total_counts() + 1))
+    local highest = get_highest_count()
+    if next_num > highest then
+      navi.db.set("counting:highest_count", tostring(next_num))
+    end
 
     -- Pay them!
     local reward = tonumber(navi.db.get("config:counting:reward_amount")) or 1

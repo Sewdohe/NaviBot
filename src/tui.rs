@@ -43,6 +43,9 @@ pub fn run(
 
     // 2. STATE
     let mut logs: Vec<(LogLevel, String)> = Vec::new();
+    let mut log_scroll: u16 = 0;
+    let mut log_auto_scroll = true;  // pinned to bottom until user scrolls up
+    let mut log_scroll_max: u16 = 0; // updated each frame, used by key handler
     let mut input_mode = false;
     let mut input_buffer = String::new();
 
@@ -69,7 +72,7 @@ pub fn run(
             }
         }
         // Keep log size manageable
-        if logs.len() > 50 { logs.remove(0); }
+        if logs.len() > 200 { logs.remove(0); }
 
         // B. DRAW UI
         terminal.draw(|f| {
@@ -119,11 +122,13 @@ pub fn run(
                         ])
                     }).collect();
                 
-                // --- NEW: Dynamically calculate the safe scroll distance ---
-                // Get the height of the box, minus 2 for the top/bottom borders
-                let visible_height = chunks[0].height.saturating_sub(2); 
-                // Only scroll if we have more logs than we have vertical space!
-                let scroll_offset = (log_lines.len() as u16).saturating_sub(visible_height);
+                // Calculate scroll bounds
+                let visible_height = chunks[0].height.saturating_sub(2);
+                let max_scroll = (log_lines.len() as u16).saturating_sub(visible_height);
+                log_scroll_max = max_scroll;
+                // If pinned to bottom, track new messages automatically
+                if log_auto_scroll { log_scroll = max_scroll; }
+                let scroll_offset = log_scroll.min(max_scroll);
 
                 // 2. Use a Paragraph instead of a List
                 let logs_pane = Paragraph::new(log_lines)
@@ -142,7 +147,7 @@ pub fn run(
                 let input_text = if input_mode {
                     format!("> {}_", input_buffer)
                 } else {
-                    String::from("Press 'q' to quit | 'r' to reload | 'u' to re-cache channels & roles | 'i' to type | 'c' for Config")
+                    String::from("Up/Down: scroll logs | 'q' quit | 'r' reload | 'u' re-cache | 'i' type | 'c' config")
                 };
 
                 let input_widget = Paragraph::new(input_text)
@@ -366,7 +371,16 @@ pub fn run(
                         }
                         KeyCode::Char('c') if !is_editing && !is_dropdown_open => mode = AppMode::Config,
                         KeyCode::Char('l') if !is_editing && !is_dropdown_open => mode = AppMode::Logs,
-                        
+
+                        // --- LOG SCROLLING ---
+                        KeyCode::Up if mode == AppMode::Logs => {
+                            log_auto_scroll = false;
+                            log_scroll = log_scroll.saturating_sub(1);
+                        }
+                        KeyCode::Down if mode == AppMode::Logs => {
+                            log_scroll = (log_scroll + 1).min(log_scroll_max);
+                            if log_scroll >= log_scroll_max { log_auto_scroll = true; }
+                        }
 
                         // --- DROPDOWN NAVIGATION ---
                         KeyCode::Up if is_dropdown_open => {

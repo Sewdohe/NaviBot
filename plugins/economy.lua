@@ -13,6 +13,23 @@ local function get_balance(user_id)
   return tonumber(bal) or 0
 end
 
+
+local function add_balance(user_id, amount)
+  local current = get_balance(user_id)
+  local new_balance = current + amount
+  navi.db.set("economy:balance:" .. user_id, tostring(new_balance))
+
+  -- Broadcast the change so other plugins can trigger level-ups or alerts!
+  navi.emit("economy:balance_changed", {
+    user_id = user_id,
+    old_balance = current,
+    new_balance = new_balance,
+    amount_changed = amount
+  })
+
+  return new_balance
+end
+
 -- 2. Passive Income via the Event Bus!
 navi.on("message", function(msg)
   -- Using YOUR actual engine field this time!
@@ -77,23 +94,6 @@ navi.create_slash("pay", "Send money to another user", {
 
     ctx.reply("Transfer complete.", true)
   end)
-
-
-local function add_balance(user_id, amount)
-  local current = get_balance(user_id)
-  local new_balance = current + amount
-  navi.db.set("economy:balance:" .. user_id, tostring(new_balance))
-
-  -- Broadcast the change so other plugins can trigger level-ups or alerts!
-  navi.emit("economy:balance_changed", {
-    user_id = user_id,
-    old_balance = current,
-    new_balance = new_balance,
-    amount_changed = amount
-  })
-
-  return new_balance
-end
 
 -- 🔌 PUBLIC API: Allow other plugins to add money
 navi.on("economy:add", function(data)

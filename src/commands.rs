@@ -6,7 +6,7 @@ pub async fn reload(ctx: Context<'_>) -> Result<(), Error> {
     let (_, report) = {
         let lua = ctx.data().lua.lock().unwrap();
         // Call the engine helper
-        engine::load_plugins(&lua)
+        engine::load_plugins(&lua, &ctx.data().interval_registry)
     };
     ctx.say(report).await?;
     Ok(())

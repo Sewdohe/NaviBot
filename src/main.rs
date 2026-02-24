@@ -31,6 +31,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let registry_for_tui = config_registry.clone();
     let registry_for_loop = config_registry.clone();
 
+    // Interval registry — shared between engine init and the admin reload loop
+    let interval_registry: types::IntervalRegistry = Arc::new(Mutex::new(HashMap::new()));
+    let registry_for_engine_intervals = interval_registry.clone();
+    let registry_for_loop_intervals = interval_registry.clone();
+
     // Discord state shared across the bot and TUI (e.g. channel list)
     let discord_state: types::SharedDiscordState =
         Arc::new(Mutex::new(types::DiscordState::default()));
@@ -74,6 +79,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             tx_for_engine.clone(),
                             registry_for_engine,
                             state_for_engine,
+                            registry_for_engine_intervals,
                         )
                         .await;
 
@@ -138,7 +144,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         AdminCommand::Reload => {
                             let (level, report) = {
                                 let lua = lua_instance.lock().unwrap();
-                                engine::load_plugins(&lua)
+                                engine::load_plugins(&lua, &registry_for_loop_intervals)
                             };
                             let _ = tx_for_loop.send(BotEvent::Log(level, report));
                         }

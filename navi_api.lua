@@ -190,6 +190,8 @@
 ---@field set_status fun(activity_type: "playing"|"listening"|"watching"|"competing"|"custom"|"none", text: string) @Changes the bot's Discord presence
 ---@field get_roles fun(guild_id: string|nil): NaviRole[] @Returns cached roles (call navi.refresh_cache or press u first)
 ---@field get_channels fun(guild_id: string|nil): NaviChannel[] @Returns cached text channels
+---@field set_interval fun(callback: fun(), amount: number, unit: "ms"|"s"|"seconds"|"m"|"minutes"|"h"|"hours"|"d"|"days"|nil): number @Schedules `callback` to run every `amount` `unit`s. Unit defaults to `"ms"`. Returns an interval ID; all intervals are cancelled on plugin reload.
+---@field clear_interval fun(id: number) @Cancels a running interval by its ID. No-op if the ID is not found.
 
 ---@type NaviCore
 ---@diagnostic disable-next-line: missing-fields

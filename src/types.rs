@@ -66,6 +66,7 @@ pub struct Data {
     pub db: Arc<Mutex<Connection>>,
     pub tui_tx: UnboundedSender<BotEvent>,
     pub discord_state: SharedDiscordState,
+    pub interval_registry: IntervalRegistry,
 }
 
 // Configuration Types
@@ -125,4 +126,7 @@ pub struct PluginSchema {
 
 // The Shared Registry (Thread-safe map of all plugin schemas)
 pub type ConfigRegistry = Arc<Mutex<HashMap<String, PluginSchema>>>;
+
+// Registry of active interval tasks; each entry maps an interval ID to its cancel sender
+pub type IntervalRegistry = Arc<Mutex<HashMap<u64, tokio::sync::watch::Sender<bool>>>>;
 

@@ -29,6 +29,7 @@
 ---@field guild_id string|nil @The guild's snowflake ID, or nil in DMs
 ---@field args table<string, string|number|boolean> @Named options passed to the command
 ---@field reply fun(message: string) @Sends a reply to the slash interaction
+---@field modal fun(custom_id: string, title: string, fields: {id:string, label:string, style:"short"|"paragraph"|nil, placeholder:string|nil, required:boolean|nil}[]) @Responds with a modal dialog instead of a message. Cannot be combined with reply.
 
 --- Context passed to a component (button / select menu) handler.
 ---@class NaviComponentCtx
@@ -39,6 +40,17 @@
 ---@field guild_id string|nil @The guild's snowflake ID, or nil in DMs
 ---@field values string[] @Selected values (non-empty only for string-select menus)
 ---@field reply fun(message: string, ephemeral: boolean) @Sends a reply to the interaction
+---@field modal fun(custom_id: string, title: string, fields: {id:string, label:string, style:"short"|"paragraph"|nil, placeholder:string|nil, required:boolean|nil}[]) @Responds with a modal dialog instead of a message. Cannot be combined with reply.
+
+--- Context passed to a modal submit handler registered with `navi.register_modal`.
+---@class NaviModalCtx
+---@field custom_id string @The modal's custom_id (set when it was created)
+---@field user_id string @The submitting user's snowflake ID
+---@field username string @The submitting user's username
+---@field channel_id string @Channel snowflake ID
+---@field guild_id string|nil @Guild snowflake ID, nil in DMs
+---@field values table<string, string> @Map of field custom_id → submitted value
+---@field reply fun(message: string, ephemeral: boolean) @Sends a reply to the modal submission
 
 --- Context passed to `on_reaction_add` and `on_reaction_remove` global callbacks.
 ---@class NaviReactionCtx
@@ -176,6 +188,7 @@
 ---@field json NaviJSON @JSON encode/decode utilities
 ---@field register fun(callback: fun(msg: NaviMsg)) @Registers a listener for every incoming chat message
 ---@field register_component fun(custom_id: string, callback: fun(ctx: NaviComponentCtx)) @Registers a handler for a button or select-menu interaction
+---@field register_modal fun(custom_id: string, callback: fun(ctx: NaviModalCtx)) @Registers a handler for modal submissions matching the given custom_id
 ---@field register_config fun(plugin_name: string, schema: NaviConfigItem[]) @Declares TUI-editable settings for a plugin; defaults are persisted to the DB automatically
 ---@field create_slash fun(name: string, description: string, options: table, callback: fun(ctx: NaviSlashCtx)) @Declares a slash command (run `!sync` to push it to Discord)
 ---@field on fun(event_name: string, callback: fun(data: any)) @Subscribes to an inter-plugin event bus event
@@ -183,6 +196,12 @@
 ---@field say fun(channel_id: string|number, text: string) @Sends plain text to a channel
 ---@field send_message fun(channel_id: string|number, data: NaviEmbed) @Sends an embed (with optional buttons/selects) to a channel
 ---@field react fun(channel_id: string, message_id: string, emoji: string) @Adds a reaction emoji to a message
+---@field edit_message fun(channel_id: string, message_id: string, content: string) @Edits the text content of an existing message
+---@field delete_message fun(channel_id: string, message_id: string) @Deletes a message by ID
+---@field kick fun(guild_id: string, user_id: string, reason: string|nil) @Kicks a member from the guild
+---@field ban fun(guild_id: string, user_id: string, delete_message_days: number, reason: string|nil) @Bans a member. delete_message_days (0–7) controls how many days of messages to delete
+---@field unban fun(guild_id: string, user_id: string) @Removes a ban
+---@field timeout fun(guild_id: string, user_id: string, duration_seconds: number) @Times out a member. Pass 0 to clear an existing timeout
 ---@field create_channel fun(guild_id: string, name: string, options: NaviChannelOptions) @Creates a new text channel, optionally private and with a welcome message
 ---@field delete_channel fun(channel_id: string|number) @Permanently deletes a channel
 ---@field add_role fun(guild_id: string, user_id: string, role_id: string) @Assigns a role to a member

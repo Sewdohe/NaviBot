@@ -103,9 +103,15 @@ pub async fn event_handler(
             let http = ctx.http.clone();
             let interaction_id = command.id;
             let interaction_token = command.token.clone();
-            
+
             // CLONE THE TX FOR THE ASYNC REPLY BLOCK
             let tx_reply = data.tui_tx.clone();
+
+            // Clone for modal_fn before reply_fn moves them
+            let modal_http = http.clone();
+            let modal_token = interaction_token.clone();
+            let modal_id = interaction_id;
+            let modal_tx = tx_reply.clone();
 
             // --- STEP B: LOCK LUA ---
             {
@@ -157,8 +163,44 @@ pub async fn event_handler(
                             Ok(())
                         });
 
+                        let modal_fn = lua.create_function(move |_, (custom_id, title, fields): (String, String, mlua::Table)| {
+                            let mut rows = Vec::new();
+                            for pair in fields.pairs::<mlua::Integer, mlua::Table>().flatten() {
+                                let f = pair.1;
+                                let field_id: String = f.get("id").unwrap_or_default();
+                                let label: String = f.get("label").unwrap_or_default();
+                                let placeholder: String = f.get("placeholder").unwrap_or_default();
+                                let required: bool = f.get("required").unwrap_or(true);
+                                let style_str: String = f.get("style").unwrap_or_else(|_| "short".into());
+                                let style = if style_str == "paragraph" {
+                                    serenity::InputTextStyle::Paragraph
+                                } else {
+                                    serenity::InputTextStyle::Short
+                                };
+                                rows.push(serenity::CreateActionRow::InputText(
+                                    serenity::CreateInputText::new(style, label, field_id)
+                                        .placeholder(placeholder)
+                                        .required(required)
+                                ));
+                            }
+                            let modal = serenity::CreateModal::new(custom_id, title).components(rows);
+                            let response = serenity::CreateInteractionResponse::Modal(modal);
+                            let http = modal_http.clone();
+                            let token = modal_token.clone();
+                            let tx = modal_tx.clone();
+                            tokio::spawn(async move {
+                                if let Err(e) = http.create_interaction_response(modal_id, &token, &response, vec![]).await {
+                                    let _ = tx.send(crate::types::BotEvent::Log(LogLevel::Error, format!("Modal open error: {}", e)));
+                                }
+                            });
+                            Ok(())
+                        });
+
                         if let Ok(reply) = reply_fn {
                             let _ = ctx_table.set("reply", reply);
+                            if let Ok(modal) = modal_fn {
+                                let _ = ctx_table.set("modal", modal);
+                            }
                             if let Err(e) = func.call::<_, ()>(ctx_table) {
                                 let _ = data.tui_tx.send(crate::types::BotEvent::Log(LogLevel::Error, format!("Lua Slash Error: {}", e)));
                             }
@@ -286,9 +328,9 @@ pub async fn event_handler(
                 _ => Vec::new(),
             };
 
-            { 
+            {
                 let ctx_lua = data.lua.lock().unwrap();
-                
+
                 if let Ok(callback) = ctx_lua.globals().get::<_, mlua::Function>("on_component") {
                     if let Ok(table) = ctx_lua.create_table() {
                         let _ = table.set("custom_id", custom_id);
@@ -301,10 +343,16 @@ pub async fn event_handler(
                         let http = ctx.http.clone();
                         let interaction_id = comp.id;
                         let token = comp.token.clone();
-                        
+
+                        // Clone for modal_fn before reply moves them
+                        let modal_http = http.clone();
+                        let modal_token = token.clone();
+                        let modal_id = interaction_id;
+                        let modal_tx = data.tui_tx.clone();
+
                         // CLONE THE TX FOR THE ASYNC REPLY BLOCK
                         let tx_reply = data.tui_tx.clone();
-                        
+
                         table.set("reply", ctx_lua.create_function(move |_, (msg, ephemeral): (String, bool)| {
                             let h = http.clone();
                             let t = token.clone();
@@ -314,7 +362,7 @@ pub async fn event_handler(
                                     .content(msg)
                                     .ephemeral(ephemeral);
                                 let resp = serenity::CreateInteractionResponse::Message(data);
-                                
+
                                 if let Err(e) = h.create_interaction_response(interaction_id, &t, &resp, vec![]).await {
                                     let _ = tx.send(crate::types::BotEvent::Log(LogLevel::Error, format!("Error replying to component: {}", e)));
                                 }
@@ -322,9 +370,113 @@ pub async fn event_handler(
                             Ok(())
                         })?)?;
 
+                        if let Ok(modal_fn) = ctx_lua.create_function(move |_, (custom_id, title, fields): (String, String, mlua::Table)| {
+                            let mut rows = Vec::new();
+                            for pair in fields.pairs::<mlua::Integer, mlua::Table>().flatten() {
+                                let f = pair.1;
+                                let field_id: String = f.get("id").unwrap_or_default();
+                                let label: String = f.get("label").unwrap_or_default();
+                                let placeholder: String = f.get("placeholder").unwrap_or_default();
+                                let required: bool = f.get("required").unwrap_or(true);
+                                let style_str: String = f.get("style").unwrap_or_else(|_| "short".into());
+                                let style = if style_str == "paragraph" {
+                                    serenity::InputTextStyle::Paragraph
+                                } else {
+                                    serenity::InputTextStyle::Short
+                                };
+                                rows.push(serenity::CreateActionRow::InputText(
+                                    serenity::CreateInputText::new(style, label, field_id)
+                                        .placeholder(placeholder)
+                                        .required(required)
+                                ));
+                            }
+                            let modal = serenity::CreateModal::new(custom_id, title).components(rows);
+                            let response = serenity::CreateInteractionResponse::Modal(modal);
+                            let http = modal_http.clone();
+                            let token = modal_token.clone();
+                            let tx = modal_tx.clone();
+                            tokio::spawn(async move {
+                                if let Err(e) = http.create_interaction_response(modal_id, &token, &response, vec![]).await {
+                                    let _ = tx.send(crate::types::BotEvent::Log(LogLevel::Error, format!("Modal open error: {}", e)));
+                                }
+                            });
+                            Ok(())
+                        }) {
+                            let _ = table.set("modal", modal_fn);
+                        }
+
                         if let Err(e) = callback.call::<_, ()>(table) {
                             let _ = data.tui_tx.send(crate::types::BotEvent::Log(LogLevel::Error, format!("Lua Component Error: {}", e)));
                         }
+                    }
+                };
+            }
+        }
+    }
+
+    // 6. MODAL SUBMIT HANDLER
+    if let serenity::FullEvent::InteractionCreate { interaction } = event {
+        if let serenity::Interaction::Modal(modal) = interaction {
+            let user_id = modal.user.id.get().to_string();
+            let username = modal.user.name.clone();
+            let custom_id = modal.data.custom_id.clone();
+            let channel_id = modal.channel_id.get().to_string();
+            let guild_id = modal.guild_id.map(|g| g.get().to_string());
+
+            let mut field_values: Vec<(String, String)> = Vec::new();
+            for row in &modal.data.components {
+                for comp in &row.components {
+                    if let serenity::ActionRowComponent::InputText(input) = comp {
+                        field_values.push((
+                            input.custom_id.clone(),
+                            input.value.clone().unwrap_or_default(),
+                        ));
+                    }
+                }
+            }
+
+            let http = ctx.http.clone();
+            let interaction_id = modal.id;
+            let token = modal.token.clone();
+            let tx_reply = data.tui_tx.clone();
+
+            {
+                let lua = data.lua.lock().unwrap();
+                if let Ok(callback) = lua.globals().get::<_, mlua::Function>("on_modal_submit") {
+                    let table = lua.create_table()?;
+                    let _ = table.set("custom_id", custom_id);
+                    let _ = table.set("user_id", user_id);
+                    let _ = table.set("username", username);
+                    let _ = table.set("channel_id", channel_id);
+                    let _ = table.set("guild_id", guild_id);
+
+                    let values_table = lua.create_table()?;
+                    for (k, v) in field_values {
+                        let _ = values_table.set(k, v);
+                    }
+                    let _ = table.set("values", values_table);
+
+                    let reply_http = http.clone();
+                    let reply_token = token.clone();
+                    let reply_tx = tx_reply.clone();
+                    table.set("reply", lua.create_function(move |_, (msg, ephemeral): (String, bool)| {
+                        let h = reply_http.clone();
+                        let t = reply_token.clone();
+                        let tx = reply_tx.clone();
+                        tokio::spawn(async move {
+                            let data = serenity::CreateInteractionResponseMessage::new()
+                                .content(msg)
+                                .ephemeral(ephemeral);
+                            let resp = serenity::CreateInteractionResponse::Message(data);
+                            if let Err(e) = h.create_interaction_response(interaction_id, &t, &resp, vec![]).await {
+                                let _ = tx.send(crate::types::BotEvent::Log(LogLevel::Error, format!("Modal reply error: {}", e)));
+                            }
+                        });
+                        Ok(())
+                    })?)?;
+
+                    if let Err(e) = callback.call::<_, ()>(table) {
+                        let _ = data.tui_tx.send(crate::types::BotEvent::Log(LogLevel::Error, format!("Lua Modal Error: {}", e)));
                     }
                 };
             }

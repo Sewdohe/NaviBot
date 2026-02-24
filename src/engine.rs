@@ -109,11 +109,13 @@ pub fn load_plugins(lua: &Lua, interval_registry: &crate::types::IntervalRegistr
     // --- BAKE IN THE CORE ENGINE API ---
     let core_events = include_str!("../core/events.lua");
     let core_components = include_str!("../core/components.lua");
+    let core_modals = include_str!("../core/modals.lua");
     // let core_dispatcher = include_str!("../core/dispatcher.lua");
 
     // Execute them in exact order
     let _ = lua.load(core_events).set_name("core:events").exec();
     let _ = lua.load(core_components).set_name("core:components").exec();
+    let _ = lua.load(core_modals).set_name("core:modals").exec();
     // let _ = lua.load(core_dispatcher).set_name("core:dispatcher").exec();
 
     if let Ok(entries) = std::fs::read_dir("plugins") {
@@ -608,6 +610,87 @@ pub async fn init(
             },
         )?,
     )?;
+
+    // --- EDIT MESSAGE ---
+    let http_edit_msg = ctx.http.clone();
+    navi.set("edit_message", lua.create_function(move |_, (channel_id, message_id, content): (String, String, String)| {
+        let http = http_edit_msg.clone();
+        tokio::spawn(async move {
+            let c_id = serenity::ChannelId::new(channel_id.parse().unwrap_or(0));
+            let m_id = serenity::MessageId::new(message_id.parse().unwrap_or(0));
+            let _ = c_id.edit_message(&http, m_id, serenity::EditMessage::new().content(content)).await;
+        });
+        Ok(())
+    })?)?;
+
+    // --- DELETE MESSAGE ---
+    let http_del_msg = ctx.http.clone();
+    navi.set("delete_message", lua.create_function(move |_, (channel_id, message_id): (String, String)| {
+        let http = http_del_msg.clone();
+        tokio::spawn(async move {
+            let c_id = serenity::ChannelId::new(channel_id.parse().unwrap_or(0));
+            let m_id = serenity::MessageId::new(message_id.parse().unwrap_or(0));
+            let _ = c_id.delete_message(&http, m_id).await;
+        });
+        Ok(())
+    })?)?;
+
+    // --- KICK ---
+    let http_kick = ctx.http.clone();
+    navi.set("kick", lua.create_function(move |_, (guild_id, user_id, reason): (String, String, Option<String>)| {
+        let http = http_kick.clone();
+        tokio::spawn(async move {
+            let g_id = serenity::GuildId::new(guild_id.parse().unwrap_or(0));
+            let u_id = serenity::UserId::new(user_id.parse().unwrap_or(0));
+            let _ = http.kick_member(g_id, u_id, reason.as_deref()).await;
+        });
+        Ok(())
+    })?)?;
+
+    // --- BAN ---
+    let http_ban = ctx.http.clone();
+    navi.set("ban", lua.create_function(move |_, (guild_id, user_id, dmd, reason): (String, String, u8, Option<String>)| {
+        let http = http_ban.clone();
+        tokio::spawn(async move {
+            let g_id = serenity::GuildId::new(guild_id.parse().unwrap_or(0));
+            let u_id = serenity::UserId::new(user_id.parse().unwrap_or(0));
+            let _ = http.ban_user(g_id, u_id, dmd, reason.as_deref()).await;
+        });
+        Ok(())
+    })?)?;
+
+    // --- UNBAN ---
+    let http_unban = ctx.http.clone();
+    navi.set("unban", lua.create_function(move |_, (guild_id, user_id): (String, String)| {
+        let http = http_unban.clone();
+        tokio::spawn(async move {
+            let g_id = serenity::GuildId::new(guild_id.parse().unwrap_or(0));
+            let u_id = serenity::UserId::new(user_id.parse().unwrap_or(0));
+            let _ = http.remove_ban(g_id, u_id, None).await;
+        });
+        Ok(())
+    })?)?;
+
+    // --- TIMEOUT ---
+    let http_timeout = ctx.http.clone();
+    navi.set("timeout", lua.create_function(move |_, (guild_id, user_id, secs): (String, String, u64)| {
+        let http = http_timeout.clone();
+        tokio::spawn(async move {
+            let g_id = serenity::GuildId::new(guild_id.parse().unwrap_or(0));
+            let u_id = serenity::UserId::new(user_id.parse().unwrap_or(0));
+            let edit = if secs == 0 {
+                serenity::EditMember::new().enable_communication()
+            } else {
+                let until_ts = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs() + secs;
+                let ts = serenity::Timestamp::from_unix_timestamp(until_ts as i64)
+                    .unwrap_or(serenity::Timestamp::now());
+                serenity::EditMember::new().disable_communication_until(ts.to_string())
+            };
+            let _ = g_id.edit_member(&http, u_id, edit).await;
+        });
+        Ok(())
+    })?)?;
 
     // Send Message / Embed / Components
     let http_msg = ctx.http.clone();

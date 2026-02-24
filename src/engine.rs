@@ -411,6 +411,22 @@ pub async fn init(
     })?;
     navi.set("say", say_fn)?;
 
+    // --- SAY SYNC (returns message ID) ---
+    let http_say_sync = ctx.http.clone();
+    navi.set("say_sync", lua.create_function(move |lua, (channel_id, text): (String, String)| {
+        let http = http_say_sync.clone();
+        let result = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async move {
+                let c_id = serenity::ChannelId::new(channel_id.parse().unwrap_or(0));
+                c_id.say(&http, text).await
+            })
+        });
+        match result {
+            Ok(msg) => Ok(mlua::Value::String(lua.create_string(&msg.id.get().to_string())?)),
+            Err(_) => Ok(mlua::Value::Nil),
+        }
+    })?)?;
+
     // --- BOT PRESENCE / STATUS ---
     let ctx_status = ctx.clone();
     navi.set(
@@ -988,7 +1004,6 @@ pub async fn init(
             }
 
             let plugin_schema = PluginSchema {
-                plugin_name: plugin_name.clone(),
                 fields,
             };
 
@@ -1283,7 +1298,6 @@ pub async fn init(
 
     Ok(Data {
         lua: lua_arc,
-        db,
         tui_tx,
         discord_state,
         interval_registry,

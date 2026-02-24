@@ -17,6 +17,7 @@ pub async fn event_handler(
         let content = new_message.content.clone();
         let author = new_message.author.name.clone();
         let channel_id = new_message.channel_id.get();
+        let guild_id = new_message.guild_id.map(|g| g.get().to_string());
 
         {
             let lua = data.lua.lock().unwrap();
@@ -35,6 +36,7 @@ pub async fn event_handler(
                 msg_table.set("author", author)?;
                 msg_table.set("author_id", new_message.author.id.get())?;
                 msg_table.set("author_avatar", new_message.author.face())?;
+                msg_table.set("guild_id", guild_id)?;
 
                 let mentions = lua.create_table()?;
                 for (i, user) in new_message.mentions.iter().enumerate() {

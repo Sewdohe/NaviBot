@@ -1,5 +1,4 @@
 use mlua::Lua;
-use rusqlite::Connection;
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
@@ -63,7 +62,6 @@ pub type Context<'a> = poise::Context<'a, Data, Error>;
 // This Context holds "Data" (your custom state) and "Error" (what happens if it fails).
 pub struct Data {
     pub lua: Arc<Mutex<Lua>>,
-    pub db: Arc<Mutex<Connection>>,
     pub tui_tx: UnboundedSender<BotEvent>,
     pub discord_state: SharedDiscordState,
     pub interval_registry: IntervalRegistry,
@@ -120,7 +118,6 @@ pub struct ConfigField {
 // The full schema for a single plugin
 #[derive(Clone, Debug)]
 pub struct PluginSchema {
-    pub plugin_name: String,
     pub fields: Vec<ConfigField>,
 }
 

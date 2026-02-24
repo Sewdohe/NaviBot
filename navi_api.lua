@@ -20,6 +20,7 @@
 ---@field author_avatar string @The sender's avatar URL
 ---@field mentions NaviMentionedUser[] @Array of users mentioned in the message
 ---@field attachments string[] @Array of attachment URLs
+---@field guild_id string|nil @The guild's snowflake ID, or nil in DMs
 
 --- Context passed to a slash command callback registered with `navi.create_slash`.
 ---@class NaviSlashCtx
@@ -194,6 +195,7 @@
 ---@field on fun(event_name: string, callback: fun(data: any)) @Subscribes to an inter-plugin event bus event
 ---@field emit fun(event_name: string, data: any) @Publishes an event to all subscribers on the inter-plugin event bus
 ---@field say fun(channel_id: string|number, text: string) @Sends plain text to a channel
+---@field say_sync fun(channel_id: string|number, text: string): string|nil @Sends plain text and returns the message ID (blocks until sent), or nil on error
 ---@field send_message fun(channel_id: string|number, data: NaviEmbed) @Sends an embed (with optional buttons/selects) to a channel
 ---@field react fun(channel_id: string, message_id: string, emoji: string) @Adds a reaction emoji to a message
 ---@field edit_message fun(channel_id: string, message_id: string, content: string) @Edits the text content of an existing message

@@ -10,6 +10,67 @@ use serenity::{CreateCommand, CreateCommandOption};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc::UnboundedSender;
+use reqwest::Client as ReqwestClient;
+
+// --- JSON / LUA CONVERSION HELPERS ---
+
+fn json_to_lua<'lua>(lua: &'lua Lua, val: serde_json::Value) -> LuaResult<mlua::Value<'lua>> {
+    match val {
+        serde_json::Value::Null        => Ok(mlua::Value::Nil),
+        serde_json::Value::Bool(b)     => Ok(mlua::Value::Boolean(b)),
+        serde_json::Value::Number(n)   => {
+            if let Some(i) = n.as_i64() { Ok(mlua::Value::Integer(i)) }
+            else { Ok(mlua::Value::Number(n.as_f64().unwrap_or(0.0))) }
+        }
+        serde_json::Value::String(s)   => Ok(mlua::Value::String(lua.create_string(&s)?)),
+        serde_json::Value::Array(arr)  => {
+            let t = lua.create_table()?;
+            for (i, v) in arr.into_iter().enumerate() {
+                t.set(i + 1, json_to_lua(lua, v)?)?;
+            }
+            Ok(mlua::Value::Table(t))
+        }
+        serde_json::Value::Object(obj) => {
+            let t = lua.create_table()?;
+            for (k, v) in obj { t.set(k, json_to_lua(lua, v)?)?; }
+            Ok(mlua::Value::Table(t))
+        }
+    }
+}
+
+fn lua_to_json<'lua>(val: mlua::Value<'lua>) -> serde_json::Value {
+    match val {
+        mlua::Value::Nil           => serde_json::Value::Null,
+        mlua::Value::Boolean(b)    => serde_json::Value::Bool(b),
+        mlua::Value::Integer(i)    => serde_json::Value::Number(i.into()),
+        mlua::Value::Number(f)     => serde_json::Number::from_f64(f)
+                                        .map(serde_json::Value::Number)
+                                        .unwrap_or(serde_json::Value::Null),
+        mlua::Value::String(s)     => serde_json::Value::String(
+                                        s.to_str().unwrap_or("").to_string()),
+        mlua::Value::Table(t)      => {
+            let len = t.raw_len();
+            if len > 0 {
+                let arr: Vec<_> = (1..=len)
+                    .filter_map(|i| t.get::<_, mlua::Value>(i).ok())
+                    .map(lua_to_json)
+                    .collect();
+                if arr.len() == len { return serde_json::Value::Array(arr); }
+            }
+            let mut map = serde_json::Map::new();
+            for pair in t.pairs::<mlua::Value, mlua::Value>().flatten() {
+                let key = match pair.0 {
+                    mlua::Value::String(s) => s.to_str().unwrap_or("").to_string(),
+                    mlua::Value::Integer(i) => i.to_string(),
+                    _ => continue,
+                };
+                map.insert(key, lua_to_json(pair.1));
+            }
+            serde_json::Value::Object(map)
+        }
+        _ => serde_json::Value::Null,
+    }
+}
 
 // --- HELPER: Load Plugins ---
 pub fn load_plugins(lua: &Lua) -> (LogLevel, String) {
@@ -224,6 +285,63 @@ pub async fn init(
     "#,
     )
     .exec()?;
+
+    // --- HTTP ---
+    let http_client = ReqwestClient::new();
+    let http_table  = lua.create_table()?;
+
+    // navi.http.get(url [, headers])
+    let c = http_client.clone();
+    http_table.set("get", lua.create_function(move |lua, (url, headers): (String, Option<mlua::Table>)| {
+        let mut req = c.get(&url);
+        if let Some(h) = headers {
+            for pair in h.pairs::<String, String>().flatten() {
+                req = req.header(pair.0.as_str(), pair.1.as_str());
+            }
+        }
+        let result = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async move { req.send().await?.text().await })
+        });
+        match result {
+            Ok(body) => Ok(mlua::Value::String(lua.create_string(&body)?)),
+            Err(e)   => { eprintln!("[navi.http.get] {e}"); Ok(mlua::Value::Nil) }
+        }
+    })?)?;
+
+    // navi.http.post(url, body, headers)
+    let c = http_client.clone();
+    http_table.set("post", lua.create_function(move |lua, (url, body, headers): (String, String, Option<mlua::Table>)| {
+        let mut req = c.post(&url).body(body);
+        if let Some(h) = headers {
+            for pair in h.pairs::<String, String>().flatten() {
+                req = req.header(pair.0.as_str(), pair.1.as_str());
+            }
+        }
+        let result = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async move { req.send().await?.text().await })
+        });
+        match result {
+            Ok(body) => Ok(mlua::Value::String(lua.create_string(&body)?)),
+            Err(e)   => { eprintln!("[navi.http.post] {e}"); Ok(mlua::Value::Nil) }
+        }
+    })?)?;
+
+    navi.set("http", http_table)?;
+
+    // --- JSON ---
+    let json_table = lua.create_table()?;
+
+    json_table.set("decode", lua.create_function(|lua, s: String| {
+        let val: serde_json::Value = serde_json::from_str(&s).map_err(LuaError::external)?;
+        json_to_lua(lua, val)
+    })?)?;
+
+    json_table.set("encode", lua.create_function(|_, val: mlua::Value| {
+        let json = lua_to_json(val);
+        serde_json::to_string(&json).map_err(LuaError::external)
+    })?)?;
+
+    navi.set("json", json_table)?;
 
     // DATABASE QUERYING
     let db_conn_query = db.clone();
@@ -495,6 +613,7 @@ pub async fn init(
             let title: Option<String> = data.get("title").ok();
             let description: Option<String> = data.get("description").ok();
             let color: Option<u32> = data.get("color").ok();
+            let image_url: Option<String> = data.get::<_, String>("image").ok().filter(|s| !s.is_empty());
             let mut fields = Vec::new();
             if let Ok(lua_fields) = data.get::<_, Vec<LuaTable>>("fields") {
                 for f in lua_fields {
@@ -595,6 +714,9 @@ pub async fn init(
                     embed = embed.color(parse_color(color));
                     for (n, v, i) in fields {
                         embed = embed.field(n, v, i);
+                    }
+                    if let Some(img) = image_url {
+                        embed = embed.image(img);
                     }
                     msg = msg.embed(embed);
                 }

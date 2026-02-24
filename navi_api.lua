@@ -97,6 +97,7 @@
 ---@field title string|nil @Embed title
 ---@field description string|nil @Embed body text
 ---@field color number|nil @Hex color integer (e.g. `0x3498DB`)
+---@field image string|nil @URL of an image to display at the bottom of the embed
 ---@field fields NaviEmbedField[]|nil @Array of embed field objects
 ---@field components (NaviButton|NaviLinkButton|NaviSelectMenu)[]|nil @Buttons and/or select menus to attach
 
@@ -158,9 +159,21 @@
 ---@field warn fun(msg: string) @Sends a WARN-level message (yellow) to the TUI log pane
 ---@field error fun(msg: string) @Sends an ERROR-level message (red) to the TUI log pane
 
+--- HTTP client for making outbound requests.
+---@class NaviHTTP
+---@field get fun(url: string, headers: table<string,string>|nil): string|nil @Sends a GET request; returns body string or nil on error
+---@field post fun(url: string, body: string, headers: table<string,string>|nil): string|nil @Sends a POST request; returns body string or nil on error
+
+--- JSON encoder/decoder.
+---@class NaviJSON
+---@field decode fun(str: string): any @Parses a JSON string into a Lua table/value
+---@field encode fun(val: any): string @Serializes a Lua table/value into a JSON string
+
 ---@class NaviCore
 ---@field db NaviDB @The SQLite key-value database interface
 ---@field log NaviLogger @Structured logger; use .info(), .warn(), .error()
+---@field http NaviHTTP @Outbound HTTP client; blocks until the request completes
+---@field json NaviJSON @JSON encode/decode utilities
 ---@field register fun(callback: fun(msg: NaviMsg)) @Registers a listener for every incoming chat message
 ---@field register_component fun(custom_id: string, callback: fun(ctx: NaviComponentCtx)) @Registers a handler for a button or select-menu interaction
 ---@field register_config fun(plugin_name: string, schema: NaviConfigItem[]) @Declares TUI-editable settings for a plugin; defaults are persisted to the DB automatically

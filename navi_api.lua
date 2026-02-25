@@ -28,6 +28,7 @@
 ---@field username string @The invoking user's username
 ---@field channel_id string @The channel's snowflake ID (string)
 ---@field guild_id string|nil @The guild's snowflake ID, or nil in DMs
+---@field member_roles string[] @Role IDs of the invoking member. Empty array in DMs.
 ---@field args table<string, string|number|boolean> @Named options passed to the command
 ---@field reply fun(message: string) @Sends a reply to the slash interaction
 ---@field modal fun(custom_id: string, title: string, fields: {id:string, label:string, style:"short"|"paragraph"|nil, placeholder:string|nil, required:boolean|nil}[]) @Responds with a modal dialog instead of a message. Cannot be combined with reply.
@@ -39,6 +40,7 @@
 ---@field username string @The clicking user's username
 ---@field channel_id string @The channel's snowflake ID
 ---@field guild_id string|nil @The guild's snowflake ID, or nil in DMs
+---@field member_roles string[] @Role IDs of the clicking member. Empty array in DMs.
 ---@field values string[] @Selected values (non-empty only for string-select menus)
 ---@field reply fun(message: string, ephemeral: boolean) @Sends a reply to the interaction
 ---@field modal fun(custom_id: string, title: string, fields: {id:string, label:string, style:"short"|"paragraph"|nil, placeholder:string|nil, required:boolean|nil}[]) @Responds with a modal dialog instead of a message. Cannot be combined with reply.
@@ -50,6 +52,7 @@
 ---@field username string @The submitting user's username
 ---@field channel_id string @Channel snowflake ID
 ---@field guild_id string|nil @Guild snowflake ID, nil in DMs
+---@field member_roles string[] @Role IDs of the submitting member. Empty array in DMs.
 ---@field values table<string, string> @Map of field custom_id → submitted value
 ---@field reply fun(message: string, ephemeral: boolean) @Sends a reply to the modal submission
 
@@ -231,3 +234,16 @@ on_reaction_add = nil
 --- Define this function in your plugin to handle reaction-remove events.
 ---@type fun(ctx: NaviReactionCtx)
 on_reaction_remove = nil
+
+-------------------------------------------------------------------------------
+-- 🔒 PERMISSIONS API  (provided by plugins/permissions.lua)
+-------------------------------------------------------------------------------
+
+---@class NaviPerms
+---@field check fun(ctx: NaviSlashCtx|NaviComponentCtx|NaviModalCtx, level: string): boolean @Returns true if the user meets or exceeds the required level. No side effects.
+---@field require fun(ctx: NaviSlashCtx|NaviComponentCtx|NaviModalCtx, level: string): boolean @Like check(), but sends an ephemeral denial message if denied. Use as: if not perms.require(ctx, "admin") then return end
+---@field level fun(ctx: NaviSlashCtx|NaviComponentCtx|NaviModalCtx): string|nil @Returns the user's highest permission level name, or nil if they have none.
+
+---@type NaviPerms
+---@diagnostic disable-next-line: missing-fields
+perms = {}

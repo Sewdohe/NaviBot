@@ -69,6 +69,11 @@ pub async fn event_handler(
             let username = command.user.name.clone();
             let channel_id = command.channel_id.get().to_string();
             let guild_id = command.guild_id.map(|g| g.get().to_string());
+            let member_roles: Vec<String> = command
+                .member
+                .as_ref()
+                .map(|m| m.roles.iter().map(|r| r.get().to_string()).collect())
+                .unwrap_or_default();
 
             // --- STEP A: PREPARE DATA ---
 
@@ -133,6 +138,12 @@ pub async fn event_handler(
                         let _ = ctx_table.set("username", username);
                         let _ = ctx_table.set("channel_id", channel_id);
                         let _ = ctx_table.set("guild_id", guild_id);
+
+                        let roles_table = lua.create_table()?;
+                        for (i, role_id) in member_roles.iter().enumerate() {
+                            roles_table.set(i + 1, role_id.clone())?;
+                        }
+                        let _ = ctx_table.set("member_roles", roles_table);
 
                         // 3. INJECT ARGUMENTS WITH TYPES
                         let args_table = lua.create_table()?;
@@ -324,6 +335,11 @@ pub async fn event_handler(
             let custom_id = comp.data.custom_id.clone();
             let channel_id = comp.channel_id.get().to_string();
             let guild_id = comp.guild_id.map(|g| g.get().to_string());
+            let member_roles: Vec<String> = comp
+                .member
+                .as_ref()
+                .map(|m| m.roles.iter().map(|r| r.get().to_string()).collect())
+                .unwrap_or_default();
 
             let values: Vec<String> = match &comp.data.kind {
                 serenity::ComponentInteractionDataKind::StringSelect { values } => values.clone(),
@@ -341,6 +357,12 @@ pub async fn event_handler(
                         let _ = table.set("channel_id", channel_id);
                         let _ = table.set("values", values);
                         let _ = table.set("guild_id", guild_id);
+
+                        let roles_table = ctx_lua.create_table()?;
+                        for (i, role_id) in member_roles.iter().enumerate() {
+                            roles_table.set(i + 1, role_id.clone())?;
+                        }
+                        let _ = table.set("member_roles", roles_table);
 
                         let http = ctx.http.clone();
                         let interaction_id = comp.id;
@@ -424,6 +446,11 @@ pub async fn event_handler(
             let custom_id = modal.data.custom_id.clone();
             let channel_id = modal.channel_id.get().to_string();
             let guild_id = modal.guild_id.map(|g| g.get().to_string());
+            let member_roles: Vec<String> = modal
+                .member
+                .as_ref()
+                .map(|m| m.roles.iter().map(|r| r.get().to_string()).collect())
+                .unwrap_or_default();
 
             let mut field_values: Vec<(String, String)> = Vec::new();
             for row in &modal.data.components {
@@ -451,6 +478,12 @@ pub async fn event_handler(
                     let _ = table.set("username", username);
                     let _ = table.set("channel_id", channel_id);
                     let _ = table.set("guild_id", guild_id);
+
+                    let roles_table = lua.create_table()?;
+                    for (i, role_id) in member_roles.iter().enumerate() {
+                        roles_table.set(i + 1, role_id.clone())?;
+                    }
+                    let _ = table.set("member_roles", roles_table);
 
                     let values_table = lua.create_table()?;
                     for (k, v) in field_values {

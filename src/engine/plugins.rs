@@ -1,6 +1,7 @@
 use mlua::prelude::*;
 use poise::serenity_prelude as serenity;
 use serenity::{CreateCommand, CreateCommandOption};
+use std::collections::HashMap;
 use std::path::Path;
 use crate::types::{Error, LogLevel, IntervalRegistry};
 
@@ -62,6 +63,16 @@ pub fn load_plugins(lua: &Lua, interval_registry: &IntervalRegistry) -> (LogLeve
 
         // 3. Now execute them in guaranteed order
         for p in lua_files {
+            // Expose the current plugin name so create_slash can tag commands
+            let stem = p
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("unknown")
+                .to_string();
+            if let Ok(navi) = lua.globals().get::<_, LuaTable>("navi") {
+                let _ = navi.set("_current_plugin", stem);
+            }
+
             if let Ok(code) = std::fs::read_to_string(&p) {
                 let chunk = lua.load(&code).set_name(p.to_string_lossy());
                 if let Err(e) = chunk.exec() {
@@ -81,6 +92,19 @@ pub fn load_plugins(lua: &Lua, interval_registry: &IntervalRegistry) -> (LogLeve
     }
 }
 
+fn option_type_from_str(s: &str) -> serenity::CommandOptionType {
+    match s {
+        "string" => serenity::CommandOptionType::String,
+        "integer" => serenity::CommandOptionType::Integer,
+        "boolean" => serenity::CommandOptionType::Boolean,
+        "user" => serenity::CommandOptionType::User,
+        "channel" => serenity::CommandOptionType::Channel,
+        "role" => serenity::CommandOptionType::Role,
+        "number" => serenity::CommandOptionType::Number,
+        _ => serenity::CommandOptionType::String,
+    }
+}
+
 pub fn read_slash_commands(lua: &Lua) -> Result<Vec<CreateCommand>, Error> {
     let navi: LuaTable = lua.globals().get("navi")?;
     let slash_cmds: LuaTable = match navi.get("slash_commands") {
@@ -88,37 +112,78 @@ pub fn read_slash_commands(lua: &Lua) -> Result<Vec<CreateCommand>, Error> {
         Err(_) => return Ok(Vec::new()),
     };
 
-    let mut commands = Vec::new();
+    // Group commands by their originating plugin
+    let mut plugin_groups: HashMap<String, Vec<(String, LuaTable)>> = HashMap::new();
 
     for pair in slash_cmds.pairs::<String, LuaTable>() {
         let (name, data) = pair?;
-        let desc: String = data.get("description")?;
+        let plugin: String = data
+            .get("_plugin")
+            .unwrap_or_else(|_| "unknown".to_string());
+        plugin_groups.entry(plugin).or_default().push((name, data));
+    }
 
-        let mut command = CreateCommand::new(name).description(desc);
+    let mut commands = Vec::new();
 
-        if let Ok(options) = data.get::<_, Vec<LuaTable>>("options") {
-            for opt in options {
-                let name: String = opt.get("name")?;
-                let desc: String = opt.get("description")?;
-                let type_str: String = opt.get("type")?;
-                let required: bool = opt.get("required").unwrap_or(false);
+    for (plugin_name, cmds) in plugin_groups {
+        if cmds.len() == 1 {
+            // Single command — register as a flat top-level command
+            let (name, data) = cmds.into_iter().next().unwrap();
+            let desc: String = data.get("description")?;
+            let mut command = CreateCommand::new(name).description(desc);
 
-                let kind = match type_str.as_str() {
-                    "string" => serenity::CommandOptionType::String,
-                    "integer" => serenity::CommandOptionType::Integer,
-                    "boolean" => serenity::CommandOptionType::Boolean,
-                    "user" => serenity::CommandOptionType::User,
-                    "channel" => serenity::CommandOptionType::Channel,
-                    "role" => serenity::CommandOptionType::Role,
-                    "number" => serenity::CommandOptionType::Number,
-                    _ => serenity::CommandOptionType::String,
-                };
-
-                let option = CreateCommandOption::new(kind, name, desc).required(required);
-                command = command.add_option(option);
+            if let Ok(options) = data.get::<_, Vec<LuaTable>>("options") {
+                for opt in options {
+                    let oname: String = opt.get("name")?;
+                    let odesc: String = opt.get("description")?;
+                    let type_str: String = opt.get("type")?;
+                    let required: bool = opt.get("required").unwrap_or(false);
+                    let kind = option_type_from_str(&type_str);
+                    command = command.add_option(
+                        CreateCommandOption::new(kind, oname, odesc).required(required),
+                    );
+                }
             }
+            commands.push(command);
+        } else {
+            // Multiple commands — group them under the plugin name as subcommands
+            let group_desc = format!(
+                "{} commands",
+                plugin_name
+                    .chars()
+                    .next()
+                    .map(|c| c.to_uppercase().to_string())
+                    .unwrap_or_default()
+                    + &plugin_name[plugin_name.char_indices().nth(1).map_or(0, |(i, _)| i)..]
+            );
+            let mut group_cmd = CreateCommand::new(&plugin_name).description(group_desc);
+
+            for (name, data) in cmds {
+                let desc: String = data.get("description")?;
+                let mut subcmd = CreateCommandOption::new(
+                    serenity::CommandOptionType::SubCommand,
+                    name,
+                    desc,
+                );
+
+                if let Ok(options) = data.get::<_, Vec<LuaTable>>("options") {
+                    for opt in options {
+                        let oname: String = opt.get("name")?;
+                        let odesc: String = opt.get("description")?;
+                        let type_str: String = opt.get("type")?;
+                        let required: bool = opt.get("required").unwrap_or(false);
+                        let kind = option_type_from_str(&type_str);
+                        subcmd = subcmd.add_sub_option(
+                            CreateCommandOption::new(kind, oname, odesc).required(required),
+                        );
+                    }
+                }
+
+                group_cmd = group_cmd.add_option(subcmd);
+            }
+
+            commands.push(group_cmd);
         }
-        commands.push(command);
     }
 
     Ok(commands)

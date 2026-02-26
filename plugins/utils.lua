@@ -22,6 +22,9 @@ end
 navi.create_slash("sendembed", "Send a custom embed to a channel", {
     { name = "channel", description = "The channel to send the embed to", type = "channel", required = true }
 }, function(ctx)
+    if not perms.require(ctx, "admin") then
+        return
+    end
     navi.db.set("pending_send_" .. ctx.user_id, ctx.args.channel)
     ctx.modal("modal_sendembed", "Design Embed", {
         { id = "title",       label = "Title",       style = "short",     placeholder = "My Embed",           required = false },

@@ -34,6 +34,11 @@ pub fn register(lua: &Lua, navi: &LuaTable) -> LuaResult<()> {
                 cmd_data.set("options", options)?;
                 cmd_data.set("callback", func)?;
 
+                let plugin_name: String = navi
+                    .get("_current_plugin")
+                    .unwrap_or_else(|_| "unknown".to_string());
+                cmd_data.set("_plugin", plugin_name)?;
+
                 slash_cmds.set(name, cmd_data)?;
                 Ok(())
             },

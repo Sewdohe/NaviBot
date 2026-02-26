@@ -10,7 +10,19 @@ enum ArgValue {
 }
 
 pub async fn handle(ctx: &serenity::Context, command: &serenity::CommandInteraction, data: &Data) -> Result<(), Error> {
-    let cmd_name = command.data.name.clone();
+    // Detect whether this is a subcommand interaction (grouped plugin) or a flat command.
+    // For grouped commands Discord sends: top-level name = plugin, options[0] = SubCommand.
+    let (cmd_name, effective_options): (String, Vec<serenity::CommandDataOption>) =
+        if let Some(first) = command.data.options.first() {
+            if let serenity::CommandDataOptionValue::SubCommand(sub_opts) = &first.value {
+                (first.name.clone(), sub_opts.clone())
+            } else {
+                (command.data.name.clone(), command.data.options.clone())
+            }
+        } else {
+            (command.data.name.clone(), command.data.options.clone())
+        };
+
     let user_id = command.user.id.get();
     let username = command.user.name.clone();
     let channel_id = command.channel_id.get().to_string();
@@ -23,7 +35,7 @@ pub async fn handle(ctx: &serenity::Context, command: &serenity::CommandInteract
 
     let mut args_map: Vec<(String, ArgValue)> = Vec::new();
 
-    for option in &command.data.options {
+    for option in &effective_options {
         let name = option.name.clone();
 
         let value = match &option.value {

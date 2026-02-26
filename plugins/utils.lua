@@ -22,7 +22,7 @@ end
 navi.create_slash("sendembed", "Send a custom embed to a channel", {
     { name = "channel", description = "The channel to send the embed to", type = "channel", required = true }
 }, function(ctx)
-    if not perms.require(ctx, "admin") then
+    if not navi.require_perm(ctx, "admin") then
         return
     end
     navi.db.set("pending_send_" .. ctx.user_id, ctx.args.channel)

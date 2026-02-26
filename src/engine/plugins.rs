@@ -138,9 +138,12 @@ pub fn read_slash_commands(lua: &Lua) -> Result<Vec<CreateCommand>, Error> {
                     let odesc: String = opt.get("description")?;
                     let type_str: String = opt.get("type")?;
                     let required: bool = opt.get("required").unwrap_or(false);
+                    let autocomplete: bool = opt.get("autocomplete").unwrap_or(false);
                     let kind = option_type_from_str(&type_str);
                     command = command.add_option(
-                        CreateCommandOption::new(kind, oname, odesc).required(required),
+                        CreateCommandOption::new(kind, oname, odesc)
+                            .required(required)
+                            .set_autocomplete(autocomplete),
                     );
                 }
             }
@@ -172,9 +175,12 @@ pub fn read_slash_commands(lua: &Lua) -> Result<Vec<CreateCommand>, Error> {
                         let odesc: String = opt.get("description")?;
                         let type_str: String = opt.get("type")?;
                         let required: bool = opt.get("required").unwrap_or(false);
+                        let autocomplete: bool = opt.get("autocomplete").unwrap_or(false);
                         let kind = option_type_from_str(&type_str);
                         subcmd = subcmd.add_sub_option(
-                            CreateCommandOption::new(kind, oname, odesc).required(required),
+                            CreateCommandOption::new(kind, oname, odesc)
+                                .required(required)
+                                .set_autocomplete(autocomplete),
                         );
                     }
                 }

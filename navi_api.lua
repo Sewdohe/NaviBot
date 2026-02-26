@@ -30,7 +30,8 @@
 ---@field guild_id string|nil @The guild's snowflake ID, or nil in DMs
 ---@field member_roles string[] @Role IDs of the invoking member. Empty array in DMs.
 ---@field args table<string, string|number|boolean> @Named options passed to the command
----@field reply fun(message: string) @Sends a reply to the slash interaction
+---@field reply fun(message: string, ephemeral: boolean|nil) @Sends a plain-text reply. Pass true as the second argument for an ephemeral (only-you-can-see) response.
+---@field reply_embed fun(data: NaviEmbed, ephemeral: boolean|nil) @Sends an embed reply. Supports the same fields as NaviEmbed (title, description, color, fields, image, components). Pass true as the second argument for ephemeral.
 ---@field modal fun(custom_id: string, title: string, fields: {id:string, label:string, style:"short"|"paragraph"|nil, placeholder:string|nil, required:boolean|nil}[]) @Responds with a modal dialog instead of a message. Cannot be combined with reply.
 
 --- Context passed to a component (button / select menu) handler.
@@ -165,6 +166,14 @@
 ---@field fields NaviEmbedField[]|nil @Array of embed field objects
 ---@field components (NaviButton|NaviLinkButton|NaviSelectMenu)[]|nil @Buttons and/or select menus to attach
 
+--- A single option passed in the options table of `navi.create_slash`.
+---@class NaviSlashOption
+---@field name string @Option name shown in Discord
+---@field description string @Help text shown in Discord
+---@field type "string"|"integer"|"number"|"boolean"|"user"|"channel"|"role" @Discord option type
+---@field required boolean|nil @Whether the option must be provided (default false)
+---@field autocomplete (fun(ctx: {current_value: string, user_id: string, guild_id: string|nil}): {name: string, value: string}[])|nil @If set, Discord will call this as the user types. Return up to 25 {name, value} pairs.
+
 --- Options accepted by `navi.create_channel`.
 ---@class NaviChannelOptions
 ---@field category_id string|nil @Snowflake ID of the category to place the channel in
@@ -242,7 +251,7 @@
 ---@field register_component fun(custom_id: string, callback: fun(ctx: NaviComponentCtx)) @Registers a handler for a button or select-menu interaction
 ---@field register_modal fun(custom_id: string, callback: fun(ctx: NaviModalCtx)) @Registers a handler for modal submissions matching the given custom_id
 ---@field register_config fun(plugin_name: string, schema: NaviConfigItem[]) @Declares TUI-editable settings for a plugin; defaults are persisted to the DB automatically
----@field create_slash fun(name: string, description: string, options: table, callback: fun(ctx: NaviSlashCtx)) @Declares a slash command (run `!sync` to push it to Discord)
+---@field create_slash fun(name: string, description: string, options: NaviSlashOption[], callback: fun(ctx: NaviSlashCtx)) @Declares a slash command. Options may include an `autocomplete` function for live suggestions. Run `!sync` or press `r` to push to Discord.
 ---@field on fun(event_name: string, callback: fun(data: any)) @Subscribes to an inter-plugin event bus event
 ---@field emit fun(event_name: string, data: any) @Publishes an event to all subscribers on the inter-plugin event bus
 ---@field say fun(channel_id: string|number, text: string) @Sends plain text to a channel

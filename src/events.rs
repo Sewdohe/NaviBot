@@ -1,3 +1,4 @@
+mod autocomplete;
 mod component;
 mod guild_cache;
 mod member;
@@ -22,6 +23,7 @@ pub async fn event_handler(
         }
         serenity::FullEvent::InteractionCreate { interaction } => match interaction {
             serenity::Interaction::Command(cmd) => slash::handle(ctx, cmd, data).await?,
+            serenity::Interaction::Autocomplete(ac) => autocomplete::handle(ctx, ac, data).await?,
             serenity::Interaction::Component(comp) => component::handle(ctx, comp, data).await?,
             serenity::Interaction::Modal(modal_submit) => modal::handle(ctx, modal_submit, data).await?,
             _ => {}

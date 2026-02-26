@@ -70,6 +70,54 @@
 ---@field username string @The new member's username
 ---@field guild_id string @The guild's snowflake ID
 
+--- Data table passed to `on_member_leave`.
+---@class NaviMemberLeaveData
+---@field user_id string @The leaving member's snowflake ID
+---@field username string @The leaving member's username
+---@field guild_id string @The guild's snowflake ID
+
+--- Data table passed to `on_message_edit`.
+---@class NaviMessageEditData
+---@field message_id string @The edited message's snowflake ID
+---@field channel_id string @The channel's snowflake ID
+---@field guild_id string|nil @The guild's snowflake ID, or nil in DMs
+---@field new_content string|nil @The updated content (nil if Discord did not include it)
+
+--- Data table passed to `on_message_delete`.
+---@class NaviMessageDeleteData
+---@field message_id string @The deleted message's snowflake ID
+---@field channel_id string @The channel's snowflake ID
+---@field guild_id string|nil @The guild's snowflake ID, or nil in DMs
+
+--- Data table passed to `on_voice_state_update`.
+---@class NaviVoiceStateData
+---@field user_id string @The user's snowflake ID
+---@field guild_id string|nil @The guild's snowflake ID
+---@field channel_id string|nil @The channel they joined, or nil if they disconnected
+---@field self_mute boolean @Whether the user has muted themselves
+---@field self_deaf boolean @Whether the user has deafened themselves
+---@field self_stream boolean @Whether the user is streaming (Go Live)
+---@field self_video boolean @Whether the user has their camera on
+
+--- Member info returned by `navi.get_member`.
+---@class NaviMember
+---@field user_id string @The member's snowflake ID
+---@field username string @The member's username
+---@field display_name string @Nickname if set, otherwise username
+---@field nickname string|nil @Server nickname, or nil if not set
+---@field joined_at string|nil @ISO 8601 timestamp of when they joined
+---@field roles string[] @Array of role snowflake IDs
+
+--- Message data returned by `navi.fetch_message`.
+---@class NaviFetchedMessage
+---@field message_id string @The message's snowflake ID
+---@field channel_id string @The channel's snowflake ID
+---@field guild_id string|nil @The guild's snowflake ID, or nil in DMs
+---@field content string @The message text
+---@field author_id string @The author's snowflake ID
+---@field author string @The author's username
+---@field attachments string[] @Array of attachment URLs
+
 -------------------------------------------------------------------------------
 -- 🧩 UI COMPONENT TYPES  (used inside `NaviEmbed.components`)
 -------------------------------------------------------------------------------
@@ -219,6 +267,9 @@
 ---@field check_perm fun(ctx: NaviSlashCtx|NaviComponentCtx|NaviModalCtx, level: "user"|"helper"|"moderator"|"admin"|"owner"): boolean @Returns true if the user meets or exceeds the required level. No side effects.
 ---@field require_perm fun(ctx: NaviSlashCtx|NaviComponentCtx|NaviModalCtx, level: "user"|"helper"|"moderator"|"admin"|"owner"): boolean @Like check_perm(), but sends an ephemeral denial if the user lacks the level. Use as: if not navi.require_perm(ctx, "admin") then return end
 ---@field get_perm_level fun(ctx: NaviSlashCtx|NaviComponentCtx|NaviModalCtx): "user"|"helper"|"moderator"|"admin"|"owner" @Returns the user's highest permission level. Never nil; defaults to "user".
+---@field dm fun(user_id: string, text: string) @Sends a plain-text DM to a user. Fire-and-forget; logs an error if the user has DMs disabled.
+---@field get_member fun(guild_id: string, user_id: string): NaviMember|nil @Fetches live member info from Discord. Returns nil if the member is not found. Blocks until complete.
+---@field fetch_message fun(channel_id: string, message_id: string): NaviFetchedMessage|nil @Fetches a message by ID. Returns nil if not found or inaccessible. Blocks until complete.
 
 ---@type NaviCore
 ---@diagnostic disable-next-line: missing-fields
@@ -237,4 +288,21 @@ on_reaction_add = nil
 --- Define this function in your plugin to handle reaction-remove events.
 ---@type fun(ctx: NaviReactionCtx)
 on_reaction_remove = nil
+
+--- Called when a member leaves or is removed from a guild.
+---@type fun(data: NaviMemberLeaveData)
+on_member_leave = nil
+
+--- Called when a message is edited. `new_content` may be nil if Discord omitted it.
+---@type fun(data: NaviMessageEditData)
+on_message_edit = nil
+
+--- Called when a message is deleted.
+---@type fun(data: NaviMessageDeleteData)
+on_message_delete = nil
+
+--- Called whenever a user's voice state changes (join, leave, mute, deafen, stream, etc.).
+--- `channel_id` is nil when the user disconnected from voice entirely.
+---@type fun(data: NaviVoiceStateData)
+on_voice_state_update = nil
 

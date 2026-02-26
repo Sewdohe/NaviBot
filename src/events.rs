@@ -5,6 +5,7 @@ mod message;
 mod modal;
 mod reaction;
 mod slash;
+mod voice;
 
 use crate::types::{Data, Error};
 use poise::serenity_prelude as serenity;
@@ -33,6 +34,18 @@ pub async fn event_handler(
         }
         serenity::FullEvent::GuildMemberAddition { new_member } => {
             member::handle(new_member, data).await?;
+        }
+        serenity::FullEvent::GuildMemberRemoval { guild_id, user, .. } => {
+            member::handle_leave(user, *guild_id, data).await?;
+        }
+        serenity::FullEvent::MessageUpdate { event, .. } => {
+            message::handle_edit(event, data).await?;
+        }
+        serenity::FullEvent::MessageDelete { channel_id, deleted_message_id, guild_id } => {
+            message::handle_delete(*channel_id, *deleted_message_id, *guild_id, data).await?;
+        }
+        serenity::FullEvent::VoiceStateUpdate { new, .. } => {
+            voice::handle(new, data).await?;
         }
         serenity::FullEvent::GuildCreate { guild, is_new: _ } => {
             guild_cache::handle(guild, data).await?;

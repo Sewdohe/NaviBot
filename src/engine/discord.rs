@@ -216,6 +216,36 @@ pub fn register(
         Ok(())
     })?)?;
 
+    // --- GET MEMBER ---
+    let http_get_member = ctx.http.clone();
+    navi.set("get_member", lua.create_function(move |lua, (guild_id, user_id): (String, String)| {
+        let http = http_get_member.clone();
+        let result = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async move {
+                let g_id = serenity::GuildId::new(guild_id.parse().unwrap_or(0));
+                let u_id = serenity::UserId::new(user_id.parse().unwrap_or(0));
+                g_id.member(&http, u_id).await
+            })
+        });
+        match result {
+            Ok(member) => {
+                let t = lua.create_table()?;
+                t.set("user_id", member.user.id.get().to_string())?;
+                t.set("username", member.user.name.clone())?;
+                t.set("display_name", member.display_name().to_string())?;
+                t.set("nickname", member.nick.clone())?;
+                t.set("joined_at", member.joined_at.map(|ts| ts.to_string()))?;
+                let roles = lua.create_table()?;
+                for (i, r) in member.roles.iter().enumerate() {
+                    roles.set(i + 1, r.get().to_string())?;
+                }
+                t.set("roles", roles)?;
+                Ok(mlua::Value::Table(t))
+            }
+            Err(_) => Ok(mlua::Value::Nil),
+        }
+    })?)?;
+
     // --- DISCORD CACHE BINDINGS ---
     let state_roles = discord_state.clone();
     navi.set(

@@ -287,5 +287,58 @@ pub fn register(
         })?,
     )?;
 
+    // --- DM ---
+    let http_dm = ctx.http.clone();
+    let tx_dm = tui_tx.clone();
+    navi.set("dm", lua.create_function(move |_, (user_id, text): (String, String)| {
+        let http = http_dm.clone();
+        let tx = tx_dm.clone();
+        tokio::spawn(async move {
+            let u_id = serenity::UserId::new(user_id.parse().unwrap_or(0));
+            match u_id.create_dm_channel(&http).await {
+                Ok(dm) => {
+                    if let Err(e) = dm.say(&http, text).await {
+                        let _ = tx.send(BotEvent::Log(LogLevel::Error, format!("Failed to send DM: {}", e)));
+                    }
+                }
+                Err(e) => {
+                    let _ = tx.send(BotEvent::Log(LogLevel::Error, format!("Failed to open DM channel: {}", e)));
+                }
+            }
+        });
+        Ok(())
+    })?)?;
+
+    // --- FETCH MESSAGE ---
+    let http_fetch = ctx.http.clone();
+    navi.set("fetch_message", lua.create_function(move |lua, (channel_id, message_id): (String, String)| {
+        let http = http_fetch.clone();
+        let result = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async move {
+                let c_id = serenity::ChannelId::new(channel_id.parse().unwrap_or(0));
+                let m_id = serenity::MessageId::new(message_id.parse().unwrap_or(0));
+                c_id.message(&http, m_id).await
+            })
+        });
+        match result {
+            Ok(msg) => {
+                let t = lua.create_table()?;
+                t.set("message_id", msg.id.get().to_string())?;
+                t.set("channel_id", msg.channel_id.get().to_string())?;
+                t.set("guild_id", msg.guild_id.map(|g| g.get().to_string()))?;
+                t.set("content", msg.content.clone())?;
+                t.set("author_id", msg.author.id.get().to_string())?;
+                t.set("author", msg.author.name.clone())?;
+                let attachments = lua.create_table()?;
+                for (i, a) in msg.attachments.iter().enumerate() {
+                    attachments.set(i + 1, a.url.clone())?;
+                }
+                t.set("attachments", attachments)?;
+                Ok(mlua::Value::Table(t))
+            }
+            Err(_) => Ok(mlua::Value::Nil),
+        }
+    })?)?;
+
     Ok(())
 }

@@ -2,6 +2,40 @@ use crate::types::{Data, Error, LogLevel};
 use mlua::Function;
 use poise::serenity_prelude as serenity;
 
+pub async fn handle_edit(event: &serenity::MessageUpdateEvent, data: &Data) -> Result<(), Error> {
+    let lua = data.lua.lock().unwrap();
+    if let Ok(func) = lua.globals().get::<_, Function>("on_message_edit") {
+        let t = lua.create_table()?;
+        t.set("message_id", event.id.get().to_string())?;
+        t.set("channel_id", event.channel_id.get().to_string())?;
+        t.set("guild_id", event.guild_id.map(|g| g.get().to_string()))?;
+        t.set("new_content", event.content.clone())?;
+        if let Err(e) = func.call::<_, ()>(t) {
+            let _ = data.tui_tx.send(crate::types::BotEvent::Log(LogLevel::Error, format!("Lua on_message_edit error: {}", e)));
+        }
+    }
+    Ok(())
+}
+
+pub async fn handle_delete(
+    channel_id: serenity::ChannelId,
+    message_id: serenity::MessageId,
+    guild_id: Option<serenity::GuildId>,
+    data: &Data,
+) -> Result<(), Error> {
+    let lua = data.lua.lock().unwrap();
+    if let Ok(func) = lua.globals().get::<_, Function>("on_message_delete") {
+        let t = lua.create_table()?;
+        t.set("message_id", message_id.get().to_string())?;
+        t.set("channel_id", channel_id.get().to_string())?;
+        t.set("guild_id", guild_id.map(|g| g.get().to_string()))?;
+        if let Err(e) = func.call::<_, ()>(t) {
+            let _ = data.tui_tx.send(crate::types::BotEvent::Log(LogLevel::Error, format!("Lua on_message_delete error: {}", e)));
+        }
+    }
+    Ok(())
+}
+
 pub async fn handle(_ctx: &serenity::Context, msg: &serenity::Message, data: &Data) -> Result<(), Error> {
     let content = msg.content.clone();
     let author = msg.author.name.clone();

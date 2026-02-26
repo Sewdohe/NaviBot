@@ -216,6 +216,9 @@
 ---@field get_channels fun(guild_id: string|nil): NaviChannel[] @Returns cached text channels
 ---@field set_interval fun(callback: fun(), amount: number, unit: "ms"|"s"|"seconds"|"m"|"minutes"|"h"|"hours"|"d"|"days"|nil): number @Schedules `callback` to run every `amount` `unit`s. Unit defaults to `"ms"`. Returns an interval ID; all intervals are cancelled on plugin reload.
 ---@field clear_interval fun(id: number) @Cancels a running interval by its ID. No-op if the ID is not found.
+---@field check_perm fun(ctx: NaviSlashCtx|NaviComponentCtx|NaviModalCtx, level: "user"|"helper"|"moderator"|"admin"|"owner"): boolean @Returns true if the user meets or exceeds the required level. No side effects.
+---@field require_perm fun(ctx: NaviSlashCtx|NaviComponentCtx|NaviModalCtx, level: "user"|"helper"|"moderator"|"admin"|"owner"): boolean @Like check_perm(), but sends an ephemeral denial if the user lacks the level. Use as: if not navi.require_perm(ctx, "admin") then return end
+---@field get_perm_level fun(ctx: NaviSlashCtx|NaviComponentCtx|NaviModalCtx): "user"|"helper"|"moderator"|"admin"|"owner" @Returns the user's highest permission level. Never nil; defaults to "user".
 
 ---@type NaviCore
 ---@diagnostic disable-next-line: missing-fields
@@ -235,15 +238,3 @@ on_reaction_add = nil
 ---@type fun(ctx: NaviReactionCtx)
 on_reaction_remove = nil
 
--------------------------------------------------------------------------------
--- 🔒 PERMISSIONS API  (provided by plugins/permissions.lua)
--------------------------------------------------------------------------------
-
----@class NaviPerms
----@field check fun(ctx: NaviSlashCtx|NaviComponentCtx|NaviModalCtx, level: string): boolean @Returns true if the user meets or exceeds the required level. No side effects.
----@field require fun(ctx: NaviSlashCtx|NaviComponentCtx|NaviModalCtx, level: string): boolean @Like check(), but sends an ephemeral denial message if denied. Use as: if not perms.require(ctx, "admin") then return end
----@field level fun(ctx: NaviSlashCtx|NaviComponentCtx|NaviModalCtx): string|nil @Returns the user's highest permission level name, or nil if they have none.
-
----@type NaviPerms
----@diagnostic disable-next-line: missing-fields
-perms = {}

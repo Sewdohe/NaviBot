@@ -37,6 +37,13 @@ pub async fn event_handler(
         serenity::FullEvent::GuildCreate { guild, is_new: _ } => {
             guild_cache::handle(guild, data).await?;
         }
+        serenity::FullEvent::GuildUpdate { new_data, .. } => {
+            data.discord_state
+                .lock()
+                .unwrap()
+                .guild_owners
+                .insert(new_data.id.to_string(), new_data.owner_id.to_string());
+        }
         _ => {}
     }
     Ok(())

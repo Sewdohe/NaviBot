@@ -4,6 +4,7 @@ mod discord;
 mod intervals;
 mod logging;
 mod messaging;
+mod perms;
 mod plugins;
 mod registry;
 mod util;
@@ -53,6 +54,7 @@ pub async fn init(
     config::register(&lua, &navi, db.clone(), config_registry.clone(), tui_tx.clone())?;
     intervals::register(&lua, &navi, lua_holder.clone(), interval_registry.clone(), tui_tx.clone())?;
     registry::register(&lua, &navi)?;
+    perms::init(&lua, &navi, db.clone(), config_registry.clone(), discord_state.clone(), tui_tx.clone())?;
 
     let (load_level, load_report) = load_plugins(&lua, &interval_registry);
     let _ = tui_tx.send(BotEvent::Log(load_level, load_report));

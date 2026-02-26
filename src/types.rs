@@ -5,6 +5,38 @@ use std::{
 };
 use tokio::sync::mpsc::UnboundedSender;
 
+// Permission levels (hardcoded; owner is auto from guild.owner_id)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum PermLevel {
+    User = 0,
+    Helper = 1,
+    Moderator = 2,
+    Admin = 3,
+    Owner = 4,
+}
+
+impl PermLevel {
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.to_ascii_lowercase().as_str() {
+            "user" => Some(Self::User),
+            "helper" => Some(Self::Helper),
+            "moderator" => Some(Self::Moderator),
+            "admin" => Some(Self::Admin),
+            "owner" => Some(Self::Owner),
+            _ => None,
+        }
+    }
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::User => "user",
+            Self::Helper => "helper",
+            Self::Moderator => "moderator",
+            Self::Admin => "admin",
+            Self::Owner => "owner",
+        }
+    }
+}
+
 // Log levels for structured TUI output
 #[derive(Debug, Clone)]
 pub enum LogLevel {
@@ -101,6 +133,7 @@ pub struct DiscordState {
     pub channels: Vec<(String, String)>, // Stores (Channel_ID, Channel_Name)
     pub categories: Vec<(String, String)>,
     pub roles: Vec<DiscordRole>,
+    pub guild_owners: HashMap<String, String>, // guild_id -> owner_user_id
 }
 
 // A single setting for a plugin

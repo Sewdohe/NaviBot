@@ -6,6 +6,7 @@ pub async fn handle(guild: &serenity::Guild, data: &Data) -> Result<(), Error> {
     state.channels.clear();
     state.categories.clear();
     state.roles.clear();
+    state.guild_owners.insert(guild.id.to_string(), guild.owner_id.to_string());
 
     for (id, channel) in &guild.channels {
         if channel.kind == serenity::ChannelType::Text {

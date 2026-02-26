@@ -116,7 +116,7 @@ navi.create_slash("add_balance", "Add currency to a user's balance (admin only)"
   },
   ---@param ctx NaviSlashCtx
   function(ctx)
-    if not perms.require(ctx, "admin") then return end
+    if not navi.require_perm(ctx, "admin") then return end
 
     local target_id = ctx.args.user
     local amount    = tonumber(ctx.args.amount)

@@ -1,3 +1,0 @@
--- DEPRECATED: permissions are now handled by the Rust core.
--- Use navi.check_perm(ctx, level), navi.require_perm(ctx, level), navi.get_perm_level(ctx)
--- This file intentionally left blank.

@@ -1,4 +1,5 @@
 navi.log.info("Loading Casino Plugin")
+navi.depends_on("economy")  -- Ensure economy plugin is loaded first
 
 -- Seed the random number generator on load (Lua 5.4 style)
 math.randomseed()

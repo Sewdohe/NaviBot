@@ -1,3 +1,4 @@
+use super::embed::build_reply_embed;
 use crate::types::{Data, Error, LogLevel};
 use poise::serenity_prelude as serenity;
 
@@ -40,6 +41,8 @@ pub async fn handle(ctx: &serenity::Context, comp: &serenity::ComponentInteracti
                 let interaction_id = comp.id;
                 let token = comp.token.clone();
 
+                let reply_embed_http = ctx.http.clone();
+                let reply_embed_token = token.clone();
                 let modal_http = http.clone();
                 let modal_token = token.clone();
                 let modal_id = interaction_id;
@@ -63,6 +66,23 @@ pub async fn handle(ctx: &serenity::Context, comp: &serenity::ComponentInteracti
                     });
                     Ok(())
                 })?)?;
+
+                let reply_embed_tx = data.tui_tx.clone();
+                if let Ok(reply_embed_fn) = ctx_lua.create_function(move |_, (data, ephemeral): (mlua::Table, Option<bool>)| {
+                    let msg = build_reply_embed(&data, ephemeral.unwrap_or(false))?;
+                    let http = reply_embed_http.clone();
+                    let tok = reply_embed_token.clone();
+                    let tx = reply_embed_tx.clone();
+                    tokio::spawn(async move {
+                        let response = serenity::CreateInteractionResponse::Message(msg);
+                        if let Err(e) = http.create_interaction_response(interaction_id, &tok, &response, vec![]).await {
+                            let _ = tx.send(crate::types::BotEvent::Log(LogLevel::Error, format!("component reply_embed error: {}", e)));
+                        }
+                    });
+                    Ok(())
+                }) {
+                    let _ = table.set("reply_embed", reply_embed_fn);
+                }
 
                 if let Ok(modal_fn) = ctx_lua.create_function(move |_, (custom_id, title, fields): (String, String, mlua::Table)| {
                     let mut rows = Vec::new();

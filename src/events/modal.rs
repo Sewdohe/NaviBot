@@ -1,3 +1,4 @@
+use super::embed::build_reply_embed;
 use crate::types::{Data, Error, LogLevel};
 use poise::serenity_prelude as serenity;
 
@@ -70,6 +71,25 @@ pub async fn handle(ctx: &serenity::Context, modal_submit: &serenity::ModalInter
                 });
                 Ok(())
             })?)?;
+
+            let reply_embed_http = http.clone();
+            let reply_embed_token = token.clone();
+            let reply_embed_tx = tx_reply.clone();
+            if let Ok(reply_embed_fn) = lua.create_function(move |_, (data, ephemeral): (mlua::Table, Option<bool>)| {
+                let msg = build_reply_embed(&data, ephemeral.unwrap_or(false))?;
+                let h = reply_embed_http.clone();
+                let tok = reply_embed_token.clone();
+                let tx = reply_embed_tx.clone();
+                tokio::spawn(async move {
+                    let response = serenity::CreateInteractionResponse::Message(msg);
+                    if let Err(e) = h.create_interaction_response(interaction_id, &tok, &response, vec![]).await {
+                        let _ = tx.send(crate::types::BotEvent::Log(LogLevel::Error, format!("modal reply_embed error: {}", e)));
+                    }
+                });
+                Ok(())
+            }) {
+                let _ = table.set("reply_embed", reply_embed_fn);
+            }
 
             if let Err(e) = callback.call::<_, ()>(table) {
                 let _ = data.tui_tx.send(crate::types::BotEvent::Log(LogLevel::Error, format!("Lua Modal Error: {}", e)));

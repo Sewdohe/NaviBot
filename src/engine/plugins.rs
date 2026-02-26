@@ -1,9 +1,78 @@
 use mlua::prelude::*;
 use poise::serenity_prelude as serenity;
 use serenity::{CreateCommand, CreateCommandOption};
-use std::collections::HashMap;
-use std::path::Path;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use crate::types::{Error, LogLevel, IntervalRegistry};
+
+/// Scan a plugin's source for `navi.depends_on("name")` calls and return the
+/// list of dependency plugin stems declared at the top of the file.
+fn extract_deps(code: &str) -> Vec<String> {
+    let mut deps = Vec::new();
+    let mut remaining = code;
+    while let Some(idx) = remaining.find("navi.depends_on(") {
+        let after = &remaining[idx + "navi.depends_on(".len()..];
+        let trimmed = after.trim_start();
+        if let Some(q) = trimmed.chars().next() {
+            if q == '"' || q == '\'' {
+                let inner = &trimmed[1..];
+                if let Some(end) = inner.find(q) {
+                    deps.push(inner[..end].to_string());
+                }
+            }
+        }
+        remaining = &remaining[idx + 1..];
+    }
+    deps
+}
+
+fn visit_plugin(
+    stem: &str,
+    deps: &HashMap<String, Vec<String>>,
+    paths: &HashMap<String, PathBuf>,
+    visited: &mut HashSet<String>,
+    sorted: &mut Vec<PathBuf>,
+) {
+    if visited.contains(stem) {
+        return;
+    }
+    visited.insert(stem.to_string());
+    if let Some(plugin_deps) = deps.get(stem) {
+        for dep in plugin_deps.clone() {
+            visit_plugin(&dep, deps, paths, visited, sorted);
+        }
+    }
+    if let Some(path) = paths.get(stem) {
+        sorted.push(path.clone());
+    }
+}
+
+/// Topologically sort plugin files so that declared dependencies load first.
+fn topo_sort(files: Vec<PathBuf>) -> Vec<PathBuf> {
+    let mut stem_to_path: HashMap<String, PathBuf> = HashMap::new();
+    let mut stem_to_deps: HashMap<String, Vec<String>> = HashMap::new();
+
+    for path in &files {
+        let stem = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_string();
+        let deps = std::fs::read_to_string(path)
+            .map(|code| extract_deps(&code))
+            .unwrap_or_default();
+        stem_to_deps.insert(stem.clone(), deps);
+        stem_to_path.insert(stem, path.clone());
+    }
+
+    let stems: Vec<String> = stem_to_path.keys().cloned().collect();
+    let mut sorted = Vec::new();
+    let mut visited = HashSet::new();
+    for stem in &stems {
+        visit_plugin(stem, &stem_to_deps, &stem_to_path, &mut visited, &mut sorted);
+    }
+    sorted
+}
 
 pub fn load_plugins(lua: &Lua, interval_registry: &IntervalRegistry) -> (LogLevel, String) {
     // 0. Cancel all running intervals before reloading
@@ -58,8 +127,10 @@ pub fn load_plugins(lua: &Lua, interval_registry: &IntervalRegistry) -> (LogLeve
             }
         }
 
-        // 2. Sort plugin loading alphabetically
-        lua_files.sort();
+        // 2. Sort respecting navi.depends_on() declarations; falls back to
+        //    alphabetical within each dependency-free group.
+        lua_files.sort(); // stable alphabetical base order
+        lua_files = topo_sort(lua_files);
 
         // 3. Now execute them in guaranteed order
         for p in lua_files {

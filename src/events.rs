@@ -1,5 +1,6 @@
 mod autocomplete;
 mod component;
+mod embed;
 mod guild_cache;
 mod member;
 mod message;

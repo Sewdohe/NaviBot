@@ -17,6 +17,10 @@ pub fn register(lua: &Lua, navi: &LuaTable) -> LuaResult<()> {
         })?,
     )?;
 
+    // navi.depends_on — no-op at runtime; load order is resolved by the Rust
+    // loader which scans plugin source for these calls before executing.
+    navi.set("depends_on", lua.create_function(|_, _name: String| Ok(()))?)?;
+
     // navi.slash_commands
     let slash_cmds = lua.create_table()?;
     navi.set("slash_commands", slash_cmds)?;

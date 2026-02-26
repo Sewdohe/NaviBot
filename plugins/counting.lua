@@ -1,4 +1,5 @@
 navi.log.info("Loading Counting Game Plugin")
+navi.depends_on("economy")  -- We need the economy plugin to reward/penalize players
 
 -- 1. Register Configuration for the TUI Dashboard
 navi.register_config("counting", {

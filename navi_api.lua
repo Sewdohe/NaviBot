@@ -32,6 +32,9 @@
 ---@field args table<string, string|number|boolean> @Named options passed to the command
 ---@field reply fun(message: string, ephemeral: boolean|nil) @Sends a plain-text reply. Pass true as the second argument for an ephemeral (only-you-can-see) response.
 ---@field reply_embed fun(data: NaviEmbed, ephemeral: boolean|nil) @Sends an embed reply. Supports the same fields as NaviEmbed (title, description, color, fields, image, components). Pass true as the second argument for ephemeral.
+---@field defer fun(ephemeral: boolean|nil) @Acknowledges the interaction immediately (shows "App is thinking…"). Call this for commands that take more than 3 seconds, then respond with ctx.followup() or ctx.followup_embed(). Blocks until Discord confirms the ACK.
+---@field followup fun(message: string, ephemeral: boolean|nil) @Sends a follow-up message after ctx.defer(). Can be called multiple times.
+---@field followup_embed fun(data: NaviEmbed, ephemeral: boolean|nil) @Sends an embed as a follow-up message after ctx.defer().
 ---@field modal fun(custom_id: string, title: string, fields: {id:string, label:string, style:"short"|"paragraph"|nil, placeholder:string|nil, required:boolean|nil}[]) @Responds with a modal dialog instead of a message. Cannot be combined with reply.
 
 --- Context passed to a component (button / select menu) handler.
@@ -44,6 +47,7 @@
 ---@field member_roles string[] @Role IDs of the clicking member. Empty array in DMs.
 ---@field values string[] @Selected values (non-empty only for string-select menus)
 ---@field reply fun(message: string, ephemeral: boolean) @Sends a reply to the interaction
+---@field reply_embed fun(data: NaviEmbed, ephemeral: boolean|nil) @Sends an embed reply to the interaction
 ---@field modal fun(custom_id: string, title: string, fields: {id:string, label:string, style:"short"|"paragraph"|nil, placeholder:string|nil, required:boolean|nil}[]) @Responds with a modal dialog instead of a message. Cannot be combined with reply.
 
 --- Context passed to a modal submit handler registered with `navi.register_modal`.
@@ -56,6 +60,7 @@
 ---@field member_roles string[] @Role IDs of the submitting member. Empty array in DMs.
 ---@field values table<string, string> @Map of field custom_id → submitted value
 ---@field reply fun(message: string, ephemeral: boolean) @Sends a reply to the modal submission
+---@field reply_embed fun(data: NaviEmbed, ephemeral: boolean|nil) @Sends an embed reply to the modal submission
 
 --- Context passed to `on_reaction_add` and `on_reaction_remove` global callbacks.
 ---@class NaviReactionCtx
@@ -276,6 +281,7 @@
 ---@field check_perm fun(ctx: NaviSlashCtx|NaviComponentCtx|NaviModalCtx, level: "user"|"helper"|"moderator"|"admin"|"owner"): boolean @Returns true if the user meets or exceeds the required level. No side effects.
 ---@field require_perm fun(ctx: NaviSlashCtx|NaviComponentCtx|NaviModalCtx, level: "user"|"helper"|"moderator"|"admin"|"owner"): boolean @Like check_perm(), but sends an ephemeral denial if the user lacks the level. Use as: if not navi.require_perm(ctx, "admin") then return end
 ---@field get_perm_level fun(ctx: NaviSlashCtx|NaviComponentCtx|NaviModalCtx): "user"|"helper"|"moderator"|"admin"|"owner" @Returns the user's highest permission level. Never nil; defaults to "user".
+---@field depends_on fun(plugin_name: string) @Declares a load-order dependency on another plugin. Call this at the top of your plugin file. The Rust loader scans for these declarations and ensures dependencies execute first. No-op at runtime.
 ---@field dm fun(user_id: string, text: string) @Sends a plain-text DM to a user. Fire-and-forget; logs an error if the user has DMs disabled.
 ---@field get_member fun(guild_id: string, user_id: string): NaviMember|nil @Fetches live member info from Discord. Returns nil if the member is not found. Blocks until complete.
 ---@field fetch_message fun(channel_id: string, message_id: string): NaviFetchedMessage|nil @Fetches a message by ID. Returns nil if not found or inaccessible. Blocks until complete.

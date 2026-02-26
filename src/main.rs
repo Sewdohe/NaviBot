@@ -147,6 +147,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 engine::load_plugins(&lua, &registry_for_loop_intervals)
                             };
                             let _ = tx_for_loop.send(BotEvent::Log(level, report));
+
+                            // Re-sync slash commands after reload
+                            let cmds = {
+                                let lua = lua_instance.lock().unwrap();
+                                engine::read_slash_commands(&lua)
+                            };
+                            let http = http_for_loop.clone();
+                            let tx = tx_for_loop.clone();
+                            tokio::spawn(async move {
+                                let msg = match cmds {
+                                    Ok(c) => engine::upload_slash_commands(&http, c)
+                                        .await
+                                        .unwrap_or_else(|e| format!("Sync failed: {}", e)),
+                                    Err(e) => format!("Lua read error during sync: {}", e),
+                                };
+                                let _ = tx.send(BotEvent::Log(LogLevel::Info, msg));
+                            });
                         }
                         AdminCommand::RefreshCache => {
                             // Print the loading message

@@ -109,6 +109,35 @@ navi.on("economy:remove", function(data)
   end
 end)
 
+-- 🔑 Admin: Add to a user's balance
+navi.create_slash("add_balance", "Add currency to a user's balance (admin only)", {
+    { name = "user",   description = "Target user",      type = "user",    required = true },
+    { name = "amount", description = "Amount to add (use negative to deduct)", type = "integer", required = true }
+  },
+  ---@param ctx NaviSlashCtx
+  function(ctx)
+    if not perms.require(ctx, "admin") then return end
+
+    local target_id = ctx.args.user
+    local amount    = tonumber(ctx.args.amount)
+    local currency  = navi.db.get("config:economy:currency_name") or "Credits"
+
+    local new_bal = add_balance(target_id, amount)
+
+    local action = amount >= 0 and "Added" or "Deducted"
+    local sign   = amount >= 0 and "+" or ""
+
+    navi.send_message(ctx.channel_id, {
+      title       = "🔑 Admin: Balance Adjusted",
+      description = action .. " **" .. sign .. amount .. " " .. currency
+                    .. "** for <@" .. target_id .. ">.\n"
+                    .. "New balance: **" .. new_bal .. " " .. currency .. "**",
+      color       = 0x3498DB
+    })
+
+    ctx.reply("Done.", true)
+  end)
+
 navi.create_slash("leaderboard", "See the richest users in the server", {},
   ---@param ctx NaviSlashCtx
   function(ctx)

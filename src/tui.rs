@@ -5,7 +5,7 @@ mod state;
 use state::AppState;
 use crate::types::{AdminCommand, BotEvent, ConfigRegistry, SharedDiscordState};
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event},
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -38,8 +38,10 @@ pub fn run(
 
         if event::poll(Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
-                if input::handle_input(key.code, &mut state, &tx_to_bot, &config_registry, &discord_state) {
-                    break;
+                if key.kind == KeyEventKind::Press {
+                    if input::handle_input(key.code, &mut state, &tx_to_bot, &config_registry, &discord_state) {
+                        break;
+                    }
                 }
             }
         }

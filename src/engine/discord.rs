@@ -97,6 +97,59 @@ pub fn register(
         )?,
     )?;
 
+    // --- CREATE THREAD ---
+    let ctx_thread = ctx.clone();
+    navi.set(
+        "create_thread",
+        lua.create_function(
+            move |lua, (channel_id, name, options): (String, String, Option<mlua::Table>)| {
+                let http = ctx_thread.http.clone();
+
+                let message_id: Option<String> = options.as_ref().and_then(|o| o.get("message_id").ok()).flatten();
+                let private: bool = options.as_ref().and_then(|o| o.get("private").ok()).flatten().unwrap_or(false);
+                let auto_archive: u16 = options.as_ref().and_then(|o| o.get("auto_archive").ok()).flatten().unwrap_or(1440);
+
+                let result = tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current().block_on(async move {
+                        let c_id = serenity::ChannelId::new(channel_id.parse().unwrap_or(0));
+
+                        let kind = if private {
+                            serenity::ChannelType::PrivateThread
+                        } else {
+                            serenity::ChannelType::PublicThread
+                        };
+
+                        let archive = match auto_archive {
+                            60   => serenity::AutoArchiveDuration::OneHour,
+                            4320 => serenity::AutoArchiveDuration::ThreeDays,
+                            10080 => serenity::AutoArchiveDuration::OneWeek,
+                            _    => serenity::AutoArchiveDuration::OneDay,
+                        };
+
+                        let builder = serenity::CreateThread::new(&name)
+                            .kind(kind)
+                            .auto_archive_duration(archive);
+
+                        if let Some(mid_str) = message_id {
+                            let m_id = serenity::MessageId::new(mid_str.parse().unwrap_or(0));
+                            c_id.create_thread_from_message(&http, m_id, builder).await
+                        } else {
+                            c_id.create_thread(&http, builder).await
+                        }
+                    })
+                });
+
+                match result {
+                    Ok(thread) => Ok(mlua::Value::String(lua.create_string(&thread.id.get().to_string())?)),
+                    Err(e) => {
+                        eprintln!("[navi.create_thread] {e}");
+                        Ok(mlua::Value::Nil)
+                    }
+                }
+            },
+        )?,
+    )?;
+
     // --- DELETE CHANNEL ---
     let ctx_del = ctx.clone();
     navi.set(

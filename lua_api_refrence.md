@@ -1142,6 +1142,36 @@ Permanently deletes a channel. Use with care — this is instant and irreversibl
 navi.delete_channel(ctx.channel_id)
 ```
 
+### `navi.create_thread(channel_id, name, options?)`
+
+Creates a thread and returns its channel ID as a string, or `nil` on failure. **Blocks until complete** so you can use the returned ID immediately.
+
+```lua
+-- Standalone public thread
+local thread_id = navi.create_thread(ctx.channel_id, "My Thread")
+
+-- Thread attached to a specific message
+local thread_id = navi.create_thread(ctx.channel_id, "Discussion", {
+    message_id = ctx.message_id
+})
+
+-- Private thread that archives after an hour
+local thread_id = navi.create_thread(ctx.channel_id, "Private Chat", {
+    private      = true,
+    auto_archive = 60
+})
+
+if thread_id then
+    navi.say(thread_id, "Thread is open!")
+end
+```
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `message_id` | string\|nil | nil | If set, creates the thread attached to this message |
+| `private` | boolean | false | Create a private thread (invite-only) |
+| `auto_archive` | number | 1440 | Minutes until the thread auto-archives: `60`, `1440`, `4320`, `10080` |
+
 ---
 
 ## 19. Discord Cache

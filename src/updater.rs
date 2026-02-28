@@ -202,15 +202,9 @@ fn extract_and_replace(
 
         std::fs::write(&tmp_path, &data)?;
 
-        // Make executable on Unix
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(0o755))?;
-        }
-
-        // Atomic replace
-        std::fs::rename(&tmp_path, &current_exe)?;
+        // self_replace handles Windows file-locking and Unix atomicity transparently
+        self_replace::self_replace(&tmp_path)?;
+        std::fs::remove_file(&tmp_path).ok();
 
         let _ = tx.send(BotEvent::Log(LogLevel::Info, format!("Replaced binary at {}", current_exe.display())));
         return Ok(());

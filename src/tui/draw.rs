@@ -385,6 +385,8 @@ pub fn draw(
                     Line::from(""),
                 ];
 
+                let ds = discord_state.lock().unwrap();
+
                 for (i, field) in schema.fields.iter().enumerate() {
                     let name_style = if state.config_pane == ConfigPane::FieldList
                         && i == state.selected_field_index
@@ -411,11 +413,68 @@ pub fn draw(
                             Style::default().fg(Color::White).bg(Color::DarkGray),
                         )));
                     } else {
-                        text.push(Line::from(format!(" [ {} ]", field.default_value)));
+                        match field.field_type {
+                            ConfigType::Channel => {
+                                let display = ds.channels.iter()
+                                    .find(|(id, _)| id == &field.default_value)
+                                    .map(|(_, name)| format!("#{}", name))
+                                    .unwrap_or_else(|| if field.default_value.is_empty() {
+                                        "(not set)".to_string()
+                                    } else {
+                                        field.default_value.clone()
+                                    });
+                                text.push(Line::from(Span::styled(
+                                    format!(" [ {} ]", display),
+                                    Style::default().fg(Color::Cyan),
+                                )));
+                            }
+                            ConfigType::Category => {
+                                let display = ds.categories.iter()
+                                    .find(|(id, _)| id == &field.default_value)
+                                    .map(|(_, name)| name.clone())
+                                    .unwrap_or_else(|| if field.default_value.is_empty() {
+                                        "(not set)".to_string()
+                                    } else {
+                                        field.default_value.clone()
+                                    });
+                                text.push(Line::from(Span::styled(
+                                    format!(" [ {} ]", display),
+                                    Style::default().fg(Color::Yellow),
+                                )));
+                            }
+                            ConfigType::Role => {
+                                let (display, color) = ds.roles.iter()
+                                    .find(|r| r.id == field.default_value)
+                                    .map(|r| {
+                                        let c = if r.color == (0, 0, 0) {
+                                            Color::White
+                                        } else {
+                                            Color::Rgb(r.color.0, r.color.1, r.color.2)
+                                        };
+                                        (format!("@{}", r.name), c)
+                                    })
+                                    .unwrap_or_else(|| {
+                                        let label = if field.default_value.is_empty() {
+                                            "(not set)".to_string()
+                                        } else {
+                                            field.default_value.clone()
+                                        };
+                                        (label, Color::White)
+                                    });
+                                text.push(Line::from(Span::styled(
+                                    format!(" [ {} ]", display),
+                                    Style::default().fg(color),
+                                )));
+                            }
+                            _ => {
+                                text.push(Line::from(format!(" [ {} ]", field.default_value)));
+                            }
+                        }
                     }
 
                     text.push(Line::from(""));
                 }
+                drop(ds);
 
                 text.push(Line::from(Span::styled(
                     "Press 'l' to return to logs.",

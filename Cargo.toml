@@ -16,7 +16,7 @@ mlua = { version = "0.9", features = ["lua54", "async", "serialize", "send", "ve
 # Utilities
 serde = { version = "1", features = ["derive"] } # For handling JSON/Config data
 serde_json = "1"
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
 dotenvy = "0.15"                                 # To load your .env file (token)
 
 rusqlite = { version = "0.32", features = ["bundled"] }

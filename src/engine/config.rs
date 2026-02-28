@@ -48,7 +48,23 @@ pub fn register(
                     "role" => ConfigType::Role,
                     "category" => ConfigType::Category,
                     "list" => ConfigType::List,
+                    "enum" => ConfigType::Enum,
                     _ => ConfigType::String,
+                };
+
+                let enum_options: Vec<String> = if field_type == ConfigType::Enum {
+                    match field_table.get::<_, mlua::Table>("options") {
+                        Ok(t) => t.pairs::<mlua::Integer, mlua::Value>()
+                            .filter_map(|p| p.ok())
+                            .filter_map(|(_, v)| match v {
+                                mlua::Value::String(s) => Some(s.to_str().unwrap_or("").to_string()),
+                                _ => None,
+                            })
+                            .collect(),
+                        Err(_) => vec![],
+                    }
+                } else {
+                    vec![]
                 };
 
                 // Parse item_schema for List fields
@@ -71,12 +87,28 @@ pub fn register(
                                 "channel" => ConfigType::Channel,
                                 "role" => ConfigType::Role,
                                 "category" => ConfigType::Category,
+                                "enum" => ConfigType::Enum,
                                 _ => ConfigType::String,
+                            };
+                            let sub_enum_options: Vec<String> = if sub_type == ConfigType::Enum {
+                                match t.get::<_, mlua::Table>("options") {
+                                    Ok(opts) => opts.pairs::<mlua::Integer, mlua::Value>()
+                                        .filter_map(|p| p.ok())
+                                        .filter_map(|(_, v)| match v {
+                                            mlua::Value::String(s) => Some(s.to_str().unwrap_or("").to_string()),
+                                            _ => None,
+                                        })
+                                        .collect(),
+                                    Err(_) => vec![],
+                                }
+                            } else {
+                                vec![]
                             };
                             ConfigItemSchema {
                                 key: sub_key,
                                 name: sub_name,
                                 field_type: sub_type,
+                                enum_options: sub_enum_options,
                             }
                         })
                         .collect()
@@ -164,6 +196,7 @@ pub fn register(
                     default_value: final_value,
                     item_schema,
                     list_items,
+                    enum_options,
                 });
             }
 

@@ -256,7 +256,16 @@ pub fn draw(
                                 Style::default().fg(Color::White).bg(Color::DarkGray),
                             )));
                         } else {
-                            text.push(Line::from(format!(" [ {} ]", current_val)));
+                            match sub_field.field_type {
+                                ConfigType::Enum => {
+                                    let display = if current_val.is_empty() { "(not set)".to_string() } else { current_val.clone() };
+                                    text.push(Line::from(Span::styled(
+                                        format!(" [ {} ]", display),
+                                        Style::default().fg(Color::Green),
+                                    )));
+                                }
+                                _ => { text.push(Line::from(format!(" [ {} ]", current_val))); }
+                            }
                         }
 
                         text.push(Line::from(""));
@@ -296,6 +305,10 @@ pub fn draw(
 
                         f.render_widget(Clear, popup_area);
 
+                        let sub_enum_options = list_field.item_schema
+                            .get(state.item_edit_field_index)
+                            .map(|s| s.enum_options.clone())
+                            .unwrap_or_default();
                         let ds = discord_state.lock().unwrap();
                         let sub_field_type = list_field
                             .item_schema
@@ -311,6 +324,7 @@ pub fn draw(
                                 (" 📁 Select Category ", ds.categories.len())
                             }
                             ConfigType::Role => (" 🎭 Select Role ", ds.roles.len()),
+                            ConfigType::Enum => (" 📋 Select Option ", sub_enum_options.len()),
                             _ => (" Select ", 0),
                         };
 
@@ -363,6 +377,14 @@ pub fn draw(
                                     }
                                 })
                                 .collect(),
+                            ConfigType::Enum => sub_enum_options.iter().enumerate().map(|(i, opt)| {
+                                if i == safe_idx {
+                                    ListItem::new(format!("> {}", opt))
+                                        .style(Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD))
+                                } else {
+                                    ListItem::new(format!("  {}", opt))
+                                }
+                            }).collect(),
                             _ => vec![],
                         };
 
@@ -466,6 +488,17 @@ pub fn draw(
                                     Style::default().fg(color),
                                 )));
                             }
+                            ConfigType::Enum => {
+                                let display = if field.default_value.is_empty() {
+                                    "(not set)".to_string()
+                                } else {
+                                    field.default_value.clone()
+                                };
+                                text.push(Line::from(Span::styled(
+                                    format!(" [ {} ]", display),
+                                    Style::default().fg(Color::Green),
+                                )));
+                            }
                             _ => {
                                 text.push(Line::from(format!(" [ {} ]", field.default_value)));
                             }
@@ -518,6 +551,7 @@ pub fn draw(
 
                     f.render_widget(Clear, popup_area);
 
+                    let active_enum_options = schema.fields[state.selected_field_index].enum_options.clone();
                     let ds = discord_state.lock().unwrap();
                     let active_field_type =
                         schema.fields[state.selected_field_index].field_type.clone();
@@ -530,6 +564,7 @@ pub fn draw(
                             (" 📁 Select Category ", ds.categories.len())
                         }
                         ConfigType::Role => (" 🎭 Select Role ", ds.roles.len()),
+                        ConfigType::Enum => (" 📋 Select Option ", active_enum_options.len()),
                         _ => (" Select ", 0),
                     };
 
@@ -598,6 +633,14 @@ pub fn draw(
                                 }
                             })
                             .collect(),
+                        ConfigType::Enum => active_enum_options.iter().enumerate().map(|(i, opt)| {
+                            if i == safe_index {
+                                ListItem::new(format!("> {}", opt))
+                                    .style(Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD))
+                            } else {
+                                ListItem::new(format!("  {}", opt))
+                            }
+                        }).collect(),
                         _ => vec![],
                     };
 

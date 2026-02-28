@@ -118,7 +118,7 @@ pub fn init(
             key: "mappings".to_string(),
             name: "Role → Permission Level".to_string(),
             description:
-                "Assign roles to levels: helper / moderator / admin  (owner = server owner, automatic)"
+                "Assign Discord roles to permission levels. Owner is automatic for the server owner."
                     .to_string(),
             field_type: ConfigType::List,
             default_value: String::new(),
@@ -127,14 +127,17 @@ pub fn init(
                     key: "role_id".to_string(),
                     name: "Discord Role".to_string(),
                     field_type: ConfigType::Role,
+                    enum_options: vec![],
                 },
                 ConfigItemSchema {
                     key: "level".to_string(),
-                    name: "Level (helper/moderator/admin)".to_string(),
-                    field_type: ConfigType::String,
+                    name: "Permission Level".to_string(),
+                    field_type: ConfigType::Enum,
+                    enum_options: vec!["helper".into(), "moderator".into(), "admin".into()],
                 },
             ],
             list_items: mappings,
+            enum_options: vec![],
         }],
     };
     config_registry

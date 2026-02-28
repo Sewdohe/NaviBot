@@ -68,17 +68,18 @@ pub fn handle_input(
                     let registry = config_registry.lock().unwrap();
                     let mut names: Vec<String> = registry.keys().cloned().collect();
                     names.sort();
-                    let f_type = names.get(state.selected_plugin_index)
+                    let (f_type, enum_len) = names.get(state.selected_plugin_index)
                         .and_then(|n| registry.get(n))
                         .and_then(|s| s.fields.get(state.selected_field_index))
-                        .map(|f| f.field_type.clone())
-                        .unwrap_or(ConfigType::String);
+                        .map(|f| (f.field_type.clone(), f.enum_options.len()))
+                        .unwrap_or((ConfigType::String, 0));
 
                     let ds = discord_state.lock().unwrap();
                     match f_type {
                         ConfigType::Channel => ds.channels.len(),
                         ConfigType::Category => ds.categories.len(),
                         ConfigType::Role => ds.roles.len(),
+                        ConfigType::Enum => enum_len,
                         _ => 0
                     }.saturating_sub(1)
                 };
@@ -233,10 +234,17 @@ pub fn handle_input(
                     .map(|sf| sf.field_type.clone())
                     .unwrap_or(ConfigType::String);
                 let ds = discord_state.lock().unwrap();
+                let enum_len = names.get(state.selected_plugin_index)
+                    .and_then(|n| registry.get(n))
+                    .and_then(|s| s.fields.get(state.selected_field_index))
+                    .and_then(|f| f.item_schema.get(state.item_edit_field_index))
+                    .map(|sf| sf.enum_options.len())
+                    .unwrap_or(0);
                 let max = match sub_type {
                     ConfigType::Channel => ds.channels.len(),
                     ConfigType::Category => ds.categories.len(),
                     ConfigType::Role => ds.roles.len(),
+                    ConfigType::Enum => enum_len,
                     _ => 0,
                 }.saturating_sub(1);
                 if state.item_dropdown_index < max { state.item_dropdown_index += 1; }
@@ -257,6 +265,7 @@ pub fn handle_input(
                                     ConfigType::Channel => ds.channels.get(state.item_dropdown_index).map(|(id, _)| id.clone()),
                                     ConfigType::Category => ds.categories.get(state.item_dropdown_index).map(|(id, _)| id.clone()),
                                     ConfigType::Role => ds.roles.get(state.item_dropdown_index).map(|r| r.id.clone()),
+                                    ConfigType::Enum => sub_field.enum_options.get(state.item_dropdown_index).cloned(),
                                     _ => None,
                                 };
                                 if let Some(id) = selected_id {
@@ -305,7 +314,7 @@ pub fn handle_input(
                         if let Some(field) = schema.fields.get(state.selected_field_index) {
                             if let Some(sub_field) = field.item_schema.get(state.item_edit_field_index) {
                                 match sub_field.field_type {
-                                    ConfigType::Channel | ConfigType::Category | ConfigType::Role => {
+                                    ConfigType::Channel | ConfigType::Category | ConfigType::Role | ConfigType::Enum => {
                                         state.item_dropdown_open = true;
                                         state.item_dropdown_index = 0;
                                     }
@@ -372,6 +381,7 @@ pub fn handle_input(
                                     ConfigType::Channel => { if let Some((id, _)) = ds.channels.get(state.dropdown_selected_index) { selected_id = Some(id.clone()); } }
                                     ConfigType::Category => { if let Some((id, _)) = ds.categories.get(state.dropdown_selected_index) { selected_id = Some(id.clone()); } }
                                     ConfigType::Role => { if let Some(role) = ds.roles.get(state.dropdown_selected_index) { selected_id = Some(role.id.clone()); } }
+                                    ConfigType::Enum => { if let Some(option) = field.enum_options.get(state.dropdown_selected_index) { selected_id = Some(option.clone()); } }
                                     _ => {}
                                 }
 
@@ -425,7 +435,7 @@ pub fn handle_input(
                                 if field.field_type == ConfigType::List {
                                     state.config_pane = ConfigPane::ListManager;
                                     state.selected_list_item_index = 0;
-                                } else if field.field_type == ConfigType::Channel || field.field_type == ConfigType::Role || field.field_type == ConfigType::Category {
+                                } else if field.field_type == ConfigType::Channel || field.field_type == ConfigType::Role || field.field_type == ConfigType::Category || field.field_type == ConfigType::Enum {
                                     state.is_dropdown_open = true;
                                     state.dropdown_selected_index = 0;
                                 } else if field.field_type == ConfigType::Boolean {

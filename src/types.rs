@@ -110,6 +110,7 @@ pub enum ConfigType {
     Role,
     Category,
     List,
+    Enum,
 }
 
 // Schema for a sub-field within a List config item
@@ -118,6 +119,7 @@ pub struct ConfigItemSchema {
     pub key: String,
     pub name: String,
     pub field_type: ConfigType, // Any type except List (no nesting)
+    pub enum_options: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -147,6 +149,7 @@ pub struct ConfigField {
     pub default_value: String,  // e.g., "" (unused for List fields)
     pub item_schema: Vec<ConfigItemSchema>,          // for List fields: sub-field definitions
     pub list_items: Vec<HashMap<String, String>>,    // for List fields: current items (in-memory)
+    pub enum_options: Vec<String>,                   // non-empty only when field_type == Enum
 }
 
 // The full schema for a single plugin

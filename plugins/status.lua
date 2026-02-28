@@ -2,7 +2,7 @@ print("--- Loading Status Manager ---")
 
 -- 1. Register the settings in the TUI
 navi.register_config("bot_status", {
-    { key = "activity_type", name = "Activity Type", description = "playing, listening, watching, competing, or none", type = "string", default = "playing" },
+    { key = "activity_type", name = "Activity Type", description = "playing, listening, watching, competing, or none", type = "enum", options = {"playing", "watching", "competing", "none" }, default = "playing" },
     { key = "status_text", name = "Status Text", description = "What is the bot doing?", type = "string", default = "with my TUI Dashboard" }
 })
 

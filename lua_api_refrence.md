@@ -148,6 +148,7 @@ navi.register_config("my_plugin", {
 | `type` | string | Yes | Controls the input widget. See types below. |
 | `default` | any | No | Value written to DB if the user hasn't configured it yet. Omit for `list` fields. |
 | `item_schema` | table | Only for `list` | Defines the sub-fields of each list item. |
+| `options` | string[] | Only for `enum` | The allowed values shown in the TUI dropdown. |
 
 #### Config Types
 
@@ -160,6 +161,7 @@ navi.register_config("my_plugin", {
 | `"role"` | Role picker | Stores a role snowflake ID string |
 | `"category"` | Category picker | Stores a category (channel group) snowflake ID string |
 | `"list"` | Expandable list | Each item is a sub-table; requires `item_schema` |
+| `"enum"` | Option dropdown | Stores one of the strings declared in `options`; requires `options` |
 
 #### Reading Config Values
 
@@ -191,6 +193,60 @@ for _, item in ipairs(rewards) do
     -- item.level and item.role_id are available as strings
     navi.log.info("Level " .. item.level .. " → Role " .. item.role_id)
 end
+```
+
+Each entry in `item_schema` supports these fields:
+
+| Field | Required | Description |
+|---|---|---|
+| `key` | Yes | The key used inside each item table |
+| `name` | Yes | Human-readable label shown in the TUI |
+| `type` | Yes | Sub-field input type (see below) |
+| `options` | Only for `enum` | List of valid string values shown in the dropdown |
+
+**Sub-field types** (all types except `"list"` are allowed):
+
+| Type | TUI Widget |
+|---|---|
+| `"string"` | Text input |
+| `"number"` | Text input (use `tonumber()` when reading) |
+| `"boolean"` | Toggle |
+| `"channel"` | Channel picker |
+| `"role"` | Role picker |
+| `"category"` | Category picker |
+| `"enum"` | Option dropdown — requires `options` |
+
+#### Enum Config
+
+Use `type = "enum"` when a field (top-level or inside a list's `item_schema`) must be one of a fixed set of strings. The TUI shows a green dropdown instead of a free-text box, preventing invalid input.
+
+```lua
+-- Top-level enum field
+navi.register_config("myplugin", {
+    {
+        key = "mode",
+        name = "Operating Mode",
+        description = "Controls how the plugin behaves.",
+        type = "enum",
+        options = { "strict", "lenient", "disabled" },
+        default = "lenient"
+    }
+})
+
+local mode = navi.db.get("config:myplugin:mode")  -- "strict", "lenient", or "disabled"
+```
+
+```lua
+-- Enum sub-field inside a list
+navi.register_config("permissions", {
+    { key = "mappings", name = "Role → Permission Level", description = "Map roles to levels.", type = "list",
+      item_schema = {
+          { key = "role_id", name = "Discord Role",     type = "role" },
+          { key = "level",   name = "Permission Level", type = "enum",
+            options = { "helper", "moderator", "admin" } }
+      }
+    }
+})
 ```
 
 ---

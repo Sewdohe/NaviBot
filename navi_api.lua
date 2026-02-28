@@ -191,16 +191,18 @@
 ---@class NaviListItemSchema
 ---@field key string @Key used inside each item table
 ---@field name string @Human-readable label shown in the TUI
----@field type "string"|"number"|"boolean"|"channel"|"role"|"category" @Controls the sub-field input widget
+---@field type "string"|"number"|"boolean"|"channel"|"role"|"category"|"enum" @Controls the sub-field input widget
+---@field options string[]|nil @Required when type = "enum"; list of valid string values
 
 --- A single entry in a plugin's configuration schema.
 ---@class NaviConfigItem
 ---@field key string @Database key used to store the value (e.g. `"log_channel"`)
 ---@field name string @Human-readable label shown in the TUI
 ---@field description string @Help text shown in the TUI
----@field type "string"|"number"|"boolean"|"channel"|"role"|"category"|"list" @Controls the TUI input widget
+---@field type "string"|"number"|"boolean"|"channel"|"role"|"category"|"list"|"enum" @Controls the TUI input widget
 ---@field default string|number|boolean|nil @Value written to the DB if the user has not configured it yet; omit for list fields
 ---@field item_schema NaviListItemSchema[]|nil @Required when type = "list"; defines the sub-fields of each item
+---@field options string[]|nil @Required when type = "enum"; list of valid string values
 
 --- A Discord role from the cached guild state.
 ---@class NaviRole

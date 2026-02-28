@@ -1,6 +1,6 @@
 [package]
 name = "navi_bot"
-version = "0.1.0"
+version = "1.0.10"
 edition = "2021"
 
 [dependencies]
@@ -22,3 +22,4 @@ dotenvy = "0.15"                                 # To load your .env file (token
 rusqlite = { version = "0.32", features = ["bundled"] }
 ratatui = "0.30.0"
 crossterm = "0.29.0"
+zip = { version = "2", default-features = false, features = ["deflate"] }

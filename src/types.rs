@@ -60,6 +60,7 @@ pub enum AdminCommand {
     Shutdown,
     Reload,
     RefreshCache,
+    CheckUpdate,
     // SendMessage { channel_id: u64, content: String },
     SaveConfig {
         plugin: String,

@@ -99,6 +99,7 @@ SQLite (`navi.db`) is a single key-value table (`kv_store`). The Lua `navi.db.ge
 | `l` | Return to live logs |
 | `i` | Open terminal input |
 | `u` | Refresh Discord roles/channels cache |
+| `U` | Check GitHub for updates and self-update |
 | `Up/Down/Enter` | Navigate and edit configs |
 
 ### Adding a New Plugin

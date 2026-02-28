@@ -91,7 +91,7 @@ pub fn draw(
         let input_text = if state.input_mode {
             format!("> {}_", state.input_buffer)
         } else {
-            String::from("Up/Down: scroll logs | 'q' quit | 'r' reload | 'u' re-cache | 'i' type | 'c' config")
+            String::from("Up/Down: scroll logs | 'q' quit | 'r' reload | 'u' re-cache | 'U' update | 'i' type | 'c' config")
         };
 
         let input_widget = Paragraph::new(input_text)

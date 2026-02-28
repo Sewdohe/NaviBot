@@ -3,6 +3,7 @@ mod engine;
 mod events;
 mod tui;
 mod types;
+mod updater;
 
 use dotenvy::dotenv;
 use mlua::Lua;
@@ -228,6 +229,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 } else {
                                     let _ = tx.send(BotEvent::Log(LogLevel::Error, "Failed to fetch Discord cache!".into()));
                                 }
+                            });
+                        }
+                        AdminCommand::CheckUpdate => {
+                            let tx = tx_for_loop.clone();
+                            tokio::spawn(async move {
+                                updater::check_and_update(tx).await;
                             });
                         }
                         AdminCommand::SaveConfig { plugin, key, value } => {

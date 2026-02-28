@@ -36,6 +36,9 @@ pub fn handle_input(
             KeyCode::Char('u') if !state.is_editing && !state.is_dropdown_open && !state.item_subfield_editing && !state.item_dropdown_open => {
                 let _ = tx.send(AdminCommand::RefreshCache);
             }
+            KeyCode::Char('U') if !state.is_editing && !state.is_dropdown_open && !state.item_subfield_editing && !state.item_dropdown_open => {
+                let _ = tx.send(AdminCommand::CheckUpdate);
+            }
             KeyCode::Char('i') if !state.is_editing && !state.is_dropdown_open && !state.item_subfield_editing && !state.item_dropdown_open => {
                 if state.mode == AppMode::Logs { state.input_mode = true; }
             }

@@ -18,12 +18,23 @@ jobs:
           - os: ubuntu-latest
             artifact_name: navi-linux.zip
             binary_name: navi_bot
+            binary_dir: target/release
+            cross_target: ''
           - os: windows-latest
             artifact_name: navi-windows.zip
             binary_name: navi_bot.exe
+            binary_dir: target/release
+            cross_target: ''
           - os: macos-latest
             artifact_name: navi-macos.zip
             binary_name: navi_bot
+            binary_dir: target/release
+            cross_target: ''
+          - os: ubuntu-latest
+            artifact_name: navi-linux-arm64.zip
+            binary_name: navi_bot
+            binary_dir: target/aarch64-unknown-linux-gnu/release
+            cross_target: aarch64-unknown-linux-gnu
 
     steps:
       - name: Checkout Code
@@ -32,14 +43,24 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install cross (ARM builds only)
+        if: matrix.cross_target != ''
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
       - name: Build Release Binary
-        run: cargo build --release
+        run: |
+          if [ -n "${{ matrix.cross_target }}" ]; then
+            cross build --release --target ${{ matrix.cross_target }}
+          else
+            cargo build --release
+          fi
+        shell: bash
 
       - name: Package Release (Linux/macOS)
         if: runner.os != 'Windows'
         run: |
           mkdir -p release_pkg/plugins
-          cp target/release/${{ matrix.binary_name }} release_pkg/
+          cp ${{ matrix.binary_dir }}/${{ matrix.binary_name }} release_pkg/
           cp plugins/*.lua release_pkg/plugins/
           echo "DISCORD_TOKEN=your_token_here" > release_pkg/.env.example
           # Copy type definitions if they exist in the root
@@ -52,7 +73,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path release_pkg
-          Copy-Item "target/release/${{ matrix.binary_name }}" -Destination release_pkg/
+          Copy-Item "${{ matrix.binary_dir }}/${{ matrix.binary_name }}" -Destination release_pkg/
           New-Item -ItemType Directory -Force -Path release_pkg/plugins
           Copy-Item "plugins/*.lua" -Destination release_pkg/plugins/
           Set-Content -Path release_pkg/.env.example -Value "DISCORD_TOKEN=your_token_here"

@@ -1,7 +1,13 @@
 navi.log.info("Loading Bot Statistics Plugin")
 
+-- [[ 
+-- Use navi.emit("event-name", { data }) in your plugins, and then listen for the events here in the
+-- stats plugin to store them. 
+-- ]]
+
 -- 1. Listen for new members joining
 navi.on("member_join", function(data)
+    navi.log.info("A new user joined! Incrementing stats.")
     local current = tonumber(navi.db.get("stats:total_joins")) or 0
     navi.db.set("stats:total_joins", tostring(current + 1))
     navi.log.info("Stats: new join for " .. data.username .. ", total: " .. tostring(current + 1))
@@ -9,13 +15,13 @@ end)
 
 -- 2. Listen for tickets being opened
 navi.on("ticket_created", function(user_id)
+    navi.log.info("A new ticket was created.")
     local current = tonumber(navi.db.get("stats:total_tickets")) or 0
     navi.db.set("stats:total_tickets", tostring(current + 1))
     navi.log.info("Stats: new ticket, total: " .. tostring(current + 1))
 end)
 
 navi.on("message", function(msg)
-    navi.log.info("a message was sent")
     local current = tonumber(navi.db.get("stats:total_messages")) or 0
     navi.db.set("stats:total_messages", tostring(current + 1))
 end)

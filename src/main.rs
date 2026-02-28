@@ -5,6 +5,9 @@ mod tui;
 mod types;
 mod updater;
 
+const PLUGIN_MANIFEST_URL: &str =
+    "https://raw.githubusercontent.com/Sewdohe/navibot-plugins/main/manifest.json";
+
 use dotenvy::dotenv;
 use mlua::Lua;
 use poise::serenity_prelude as serenity;
@@ -13,7 +16,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 use tokio::sync::mpsc;
-use types::{AdminCommand, BotEvent, ConfigType, LogLevel};
+use types::{AdminCommand, BotEvent, ConfigType, LogLevel, PluginEntry};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenv().ok();
@@ -237,6 +240,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 updater::check_and_update(tx).await;
                             });
                         }
+                        AdminCommand::FetchPluginList => {
+                            let tx = tx_for_loop.clone();
+                            tokio::spawn(async move {
+                                match fetch_plugin_manifest().await {
+                                    Ok(entries) => { let _ = tx.send(BotEvent::PluginList(entries)); }
+                                    Err(e) => { let _ = tx.send(BotEvent::Log(LogLevel::Error, format!("[plugins] Fetch failed: {}", e))); }
+                                }
+                            });
+                        }
+                        AdminCommand::InstallPlugin { id, url, version } => {
+                            let tx = tx_for_loop.clone();
+                            tokio::spawn(async move {
+                                match download_plugin(&id, &url, &version).await {
+                                    Ok(()) => { let _ = tx.send(BotEvent::PluginInstalled(id)); }
+                                    Err(e) => { let _ = tx.send(BotEvent::Log(LogLevel::Error, format!("[plugins] Install failed: {}", e))); }
+                                }
+                            });
+                        }
                         AdminCommand::SaveConfig { plugin, key, value } => {
                             let db_key = format!("config:{}:{}", plugin, key);
 
@@ -422,6 +443,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 4. RUN TUI (Main Thread)
     tui::run(tx_to_bot, rx_from_tui, registry_for_tui, state_for_tui)?;
+
+    Ok(())
+}
+
+async fn fetch_plugin_manifest() -> Result<Vec<PluginEntry>, Box<dyn std::error::Error + Send + Sync>> {
+    let client = reqwest::Client::builder()
+        .user_agent(concat!("NaviBot/", env!("CARGO_PKG_VERSION")))
+        .build()?;
+    #[derive(serde::Deserialize)]
+    struct Manifest { plugins: Vec<PluginEntry> }
+    let manifest: Manifest = client.get(PLUGIN_MANIFEST_URL).send().await?.json().await?;
+    Ok(manifest.plugins)
+}
+
+async fn download_plugin(id: &str, url: &str, version: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let client = reqwest::Client::builder()
+        .user_agent(concat!("NaviBot/", env!("CARGO_PKG_VERSION")))
+        .build()?;
+    let code = client.get(url).send().await?.text().await?;
+    std::fs::write(format!("plugins/{}.lua", id), code)?;
+
+    // Record the installed version in the sidecar so the plugin browser
+    // can detect when a newer version is available in the manifest.
+    let versions_path = "plugins/.versions.json";
+    let mut versions: std::collections::HashMap<String, String> =
+        std::fs::read_to_string(versions_path)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default();
+    versions.insert(id.to_string(), version.to_string());
+    std::fs::write(versions_path, serde_json::to_string_pretty(&versions)?)?;
 
     Ok(())
 }

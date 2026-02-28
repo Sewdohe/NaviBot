@@ -91,7 +91,7 @@ pub fn draw(
         let input_text = if state.input_mode {
             format!("> {}_", state.input_buffer)
         } else {
-            String::from("Up/Down: scroll logs | 'q' quit | 'r' reload | 'u' re-cache | 'U' update | 'i' type | 'c' config")
+            String::from("Up/Down: scroll | 'q' quit | 'r' reload | 'u' re-cache | 'U' update | 'i' type | 'c' config | 'p' plugins")
         };
 
         let input_widget = Paragraph::new(input_text)
@@ -682,6 +682,159 @@ pub fn draw(
                 .border_style(Style::default().fg(Color::White))
             );
 
+        f.render_widget(controls, vertical_chunks[1]);
+    } else if state.mode == AppMode::PluginBrowser {
+        // --- PLUGIN BROWSER VIEW ---
+        let vertical_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(0), Constraint::Length(3)])
+            .split(main_chunks[1]);
+
+        if state.plugin_browser_loading {
+            let loading = Paragraph::new("Fetching plugin list…")
+                .style(Style::default().fg(Color::Yellow))
+                .block(Block::default().title(" Plugin Browser ").borders(Borders::ALL));
+            f.render_widget(loading, vertical_chunks[0]);
+        } else {
+            let chunks = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(35), Constraint::Percentage(65)])
+                .split(vertical_chunks[0]);
+
+            // Read installed versions from the sidecar written by download_plugin.
+            // Format: { "plugin_id": "1.0.0", ... }
+            let installed: std::collections::HashMap<String, String> =
+                std::fs::read_to_string("plugins/.versions.json")
+                    .ok()
+                    .and_then(|s| serde_json::from_str(&s).ok())
+                    .unwrap_or_default();
+
+            // Left pane: plugin list
+            let safe_idx = if state.plugin_browser_entries.is_empty() {
+                0
+            } else {
+                state.plugin_browser_index.min(state.plugin_browser_entries.len() - 1)
+            };
+
+            let list_items: Vec<ListItem> = if state.plugin_browser_entries.is_empty() {
+                vec![ListItem::new("  (no plugins — press 'f' to fetch)").style(Style::default().fg(Color::DarkGray))]
+            } else {
+                state.plugin_browser_entries.iter().enumerate().map(|(i, entry)| {
+                    let local_ver = installed.get(&entry.id);
+                    let needs_update = local_ver
+                        .map(|v| !v.is_empty() && v != entry.version.as_str())
+                        .unwrap_or(false);
+                    let is_installed = local_ver.is_some();
+
+                    let badge = if needs_update {
+                        " [UPDATE]".to_string()
+                    } else if is_installed {
+                        " [INSTALLED]".to_string()
+                    } else {
+                        String::new()
+                    };
+
+                    let prefix = if i == safe_idx { "> " } else { "  " };
+                    let label = format!("{}{}{}", prefix, entry.name, badge);
+
+                    let style = if i == safe_idx {
+                        Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD)
+                    } else if needs_update {
+                        Style::default().fg(Color::Yellow)
+                    } else if is_installed {
+                        Style::default().fg(Color::Green)
+                    } else {
+                        Style::default()
+                    };
+                    ListItem::new(label).style(style)
+                }).collect()
+            };
+
+            let left_pane = List::new(list_items)
+                .block(Block::default().title(" 🔌 Community Plugins (Up/Down) ").borders(Borders::ALL).border_style(Style::default().fg(Color::Cyan)));
+            f.render_widget(left_pane, chunks[0]);
+
+            // Right pane: details of selected plugin
+            let mut detail_lines = vec![Line::from("")];
+            if let Some(entry) = state.plugin_browser_entries.get(safe_idx) {
+                let local_ver = installed.get(&entry.id);
+                let needs_update = local_ver
+                    .map(|v| !v.is_empty() && v != entry.version.as_str())
+                    .unwrap_or(false);
+                let is_installed = local_ver.is_some();
+
+                detail_lines.push(Line::from(Span::styled(
+                    format!("  {}", entry.name),
+                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                )));
+
+                // Version line — show installed vs available when they differ
+                let version_line = if needs_update {
+                    let lv = local_ver.map(|s| s.as_str()).unwrap_or("?");
+                    Line::from(vec![
+                        Span::styled(format!("  v{}  ", lv), Style::default().fg(Color::DarkGray)),
+                        Span::styled("→ ", Style::default().fg(Color::Yellow)),
+                        Span::styled(format!("v{}  ", entry.version), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                        Span::styled(format!("by {}", entry.author), Style::default().fg(Color::DarkGray)),
+                    ])
+                } else {
+                    Line::from(Span::styled(
+                        format!("  v{}  by {}", entry.version, entry.author),
+                        Style::default().fg(Color::DarkGray),
+                    ))
+                };
+                detail_lines.push(version_line);
+                detail_lines.push(Line::from(""));
+
+                detail_lines.push(Line::from(Span::styled(
+                    format!("  {}", entry.description),
+                    Style::default().fg(Color::White),
+                )));
+                detail_lines.push(Line::from(""));
+
+                if !entry.tags.is_empty() {
+                    detail_lines.push(Line::from(Span::styled(
+                        format!("  Tags: {}", entry.tags.join(", ")),
+                        Style::default().fg(Color::Yellow),
+                    )));
+                    detail_lines.push(Line::from(""));
+                }
+
+                if needs_update {
+                    detail_lines.push(Line::from(Span::styled(
+                        "  [UPDATE AVAILABLE] — press Enter to update",
+                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                    )));
+                } else if is_installed {
+                    detail_lines.push(Line::from(Span::styled(
+                        "  [INSTALLED]",
+                        Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+                    )));
+                }
+
+                if !state.plugin_browser_status.is_empty() {
+                    detail_lines.push(Line::from(""));
+                    detail_lines.push(Line::from(Span::styled(
+                        format!("  {}", state.plugin_browser_status),
+                        Style::default().fg(Color::Yellow),
+                    )));
+                }
+            } else {
+                detail_lines.push(Line::from(Span::styled(
+                    "  Press 'f' to fetch the plugin list.",
+                    Style::default().fg(Color::DarkGray),
+                )));
+            }
+
+            let right_pane = Paragraph::new(detail_lines)
+                .block(Block::default().title(" Plugin Details ").borders(Borders::ALL).border_style(Style::default().fg(Color::White)));
+            f.render_widget(right_pane, chunks[1]);
+        }
+
+        // Footer controls
+        let controls = Paragraph::new("Up/Down select | Enter=install/update | d=delete | f=refresh | l=logs | q=quit")
+            .style(Style::default().fg(Color::DarkGray))
+            .block(Block::default().title(" Controls ").borders(Borders::ALL).border_style(Style::default().fg(Color::White)));
         f.render_widget(controls, vertical_chunks[1]);
     }
 }

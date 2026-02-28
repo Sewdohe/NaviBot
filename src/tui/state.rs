@@ -1,10 +1,11 @@
-use crate::types::LogLevel;
+use crate::types::{LogLevel, PluginEntry};
 use std::collections::HashMap;
 
 #[derive(PartialEq)]
 pub enum AppMode {
     Logs,
     Config,
+    PluginBrowser,
 }
 
 #[derive(PartialEq)]
@@ -44,6 +45,11 @@ pub struct AppState {
     pub item_subfield_buffer: String,
     pub item_dropdown_open: bool,
     pub item_dropdown_index: usize,
+    // Plugin browser
+    pub plugin_browser_index: usize,
+    pub plugin_browser_entries: Vec<PluginEntry>,
+    pub plugin_browser_loading: bool,
+    pub plugin_browser_status: String,
 }
 
 impl Default for AppState {
@@ -71,6 +77,10 @@ impl Default for AppState {
             item_subfield_buffer: String::new(),
             item_dropdown_open: false,
             item_dropdown_index: 0,
+            plugin_browser_index: 0,
+            plugin_browser_entries: Vec::new(),
+            plugin_browser_loading: false,
+            plugin_browser_status: String::new(),
         }
     }
 }

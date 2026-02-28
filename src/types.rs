@@ -45,11 +45,25 @@ pub enum LogLevel {
     Error,
 }
 
+// A plugin entry from the community manifest
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct PluginEntry {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub author: String,
+    pub version: String,
+    pub tags: Vec<String>,
+    pub url: String,
+}
+
 // Events: Bot -> TUI
 // "Hey TUI, this just happened"
 #[derive(Debug)]
 pub enum BotEvent {
     Log(LogLevel, String),
+    PluginList(Vec<PluginEntry>),
+    PluginInstalled(String),
     // Status { uptime: String, shard_id: u32 },
 }
 
@@ -82,6 +96,12 @@ pub enum AdminCommand {
         plugin: String,
         key: String,
         index: usize,
+    },
+    FetchPluginList,
+    InstallPlugin {
+        id: String,
+        url: String,
+        version: String,
     },
 }
 

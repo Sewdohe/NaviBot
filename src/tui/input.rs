@@ -3,6 +3,7 @@ use crossterm::event::KeyCode;
 use tokio::sync::mpsc::UnboundedSender;
 use super::state::{AppMode, AppState, ConfigPane};
 
+
 /// Returns `true` if the caller should break the main loop (quit requested).
 pub fn handle_input(
     key: KeyCode,
@@ -48,6 +49,14 @@ pub fn handle_input(
             KeyCode::Char('l') if !state.is_editing && !state.is_dropdown_open && !state.item_subfield_editing && !state.item_dropdown_open => {
                 state.mode = AppMode::Logs;
             }
+            KeyCode::Char('p') if !state.is_editing && !state.is_dropdown_open && !state.item_subfield_editing && !state.item_dropdown_open => {
+                state.mode = AppMode::PluginBrowser;
+                if state.plugin_browser_entries.is_empty() && !state.plugin_browser_loading {
+                    state.plugin_browser_loading = true;
+                    state.plugin_browser_status = "Fetching…".to_string();
+                    let _ = tx.send(AdminCommand::FetchPluginList);
+                }
+            }
 
             // --- LOG SCROLLING ---
             KeyCode::Up if state.mode == AppMode::Logs => {
@@ -57,6 +66,52 @@ pub fn handle_input(
             KeyCode::Down if state.mode == AppMode::Logs => {
                 state.log_scroll = (state.log_scroll + 1).min(state.log_scroll_max);
                 if state.log_scroll >= state.log_scroll_max { state.log_auto_scroll = true; }
+            }
+
+            // --- PLUGIN BROWSER ---
+            KeyCode::Up if state.mode == AppMode::PluginBrowser => {
+                state.plugin_browser_index = state.plugin_browser_index.saturating_sub(1);
+            }
+            KeyCode::Down if state.mode == AppMode::PluginBrowser => {
+                let max = state.plugin_browser_entries.len().saturating_sub(1);
+                if state.plugin_browser_index < max {
+                    state.plugin_browser_index += 1;
+                }
+            }
+            KeyCode::Enter if state.mode == AppMode::PluginBrowser => {
+                if let Some(entry) = state.plugin_browser_entries.get(state.plugin_browser_index) {
+                    state.plugin_browser_loading = true;
+                    state.plugin_browser_status = format!("Installing {}…", entry.id);
+                    let _ = tx.send(AdminCommand::InstallPlugin {
+                        id: entry.id.clone(),
+                        url: entry.url.clone(),
+                        version: entry.version.clone(),
+                    });
+                }
+            }
+            KeyCode::Char('f') if state.mode == AppMode::PluginBrowser => {
+                state.plugin_browser_loading = true;
+                state.plugin_browser_status = "Fetching…".to_string();
+                let _ = tx.send(AdminCommand::FetchPluginList);
+            }
+            KeyCode::Char('d') if state.mode == AppMode::PluginBrowser => {
+                if let Some(entry) = state.plugin_browser_entries.get(state.plugin_browser_index) {
+                    let path = format!("plugins/{}.lua", entry.id);
+                    if std::fs::remove_file(&path).is_ok() {
+                        // Remove the version entry from the sidecar file
+                        let versions_path = "plugins/.versions.json";
+                        if let Ok(s) = std::fs::read_to_string(versions_path) {
+                            if let Ok(mut versions) = serde_json::from_str::<std::collections::HashMap<String, String>>(&s) {
+                                versions.remove(&entry.id);
+                                let _ = std::fs::write(
+                                    versions_path,
+                                    serde_json::to_string_pretty(&versions).unwrap_or_default(),
+                                );
+                            }
+                        }
+                        state.plugin_browser_status = format!("Removed {} — press 'r' to reload", entry.id);
+                    }
+                }
             }
 
             // --- DROPDOWN NAVIGATION ---

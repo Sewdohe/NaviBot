@@ -30,6 +30,16 @@ pub fn run(
         while let Ok(event) = rx_from_bot.try_recv() {
             match event {
                 BotEvent::Log(level, s) => state.logs.push((level, s)),
+                BotEvent::PluginList(entries) => {
+                    let count = entries.len();
+                    state.plugin_browser_entries = entries;
+                    state.plugin_browser_loading = false;
+                    state.plugin_browser_status = format!("{} plugins available", count);
+                }
+                BotEvent::PluginInstalled(id) => {
+                    state.plugin_browser_status = format!("✓ {} installed — press 'r' to reload", id);
+                    state.plugin_browser_loading = false;
+                }
             }
         }
         if state.logs.len() > 200 { state.logs.remove(0); }

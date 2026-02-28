@@ -5,7 +5,7 @@ mod state;
 use state::AppState;
 use crate::types::{AdminCommand, BotEvent, ConfigRegistry, SharedDiscordState};
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind},
+    event::{self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture, Event, KeyEventKind},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -21,7 +21,7 @@ pub fn run(
 ) -> Result<(), Box<dyn std::error::Error>> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture, EnableBracketedPaste)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
     let mut state = AppState::default();
@@ -37,18 +37,28 @@ pub fn run(
         terminal.draw(|f| draw::draw(f, &mut state, &config_registry, &discord_state))?;
 
         if event::poll(Duration::from_millis(100))? {
-            if let Event::Key(key) = event::read()? {
-                if key.kind == KeyEventKind::Press {
+            match event::read()? {
+                Event::Key(key) if key.kind == KeyEventKind::Press => {
                     if input::handle_input(key.code, &mut state, &tx_to_bot, &config_registry, &discord_state) {
                         break;
                     }
                 }
+                Event::Paste(text) => {
+                    if state.is_editing {
+                        state.edit_buffer.push_str(&text);
+                    } else if state.input_mode {
+                        state.input_buffer.push_str(&text);
+                    } else if state.item_subfield_editing {
+                        state.item_subfield_buffer.push_str(&text);
+                    }
+                }
+                _ => {}
             }
         }
     }
 
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture, DisableBracketedPaste)?;
     terminal.show_cursor()?;
     Ok(())
 }

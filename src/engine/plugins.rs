@@ -115,6 +115,9 @@ pub fn load_plugins(lua: &Lua, interval_registry: &IntervalRegistry) -> (LogLeve
     let _ = lua.load(core_modals).set_name("core:modals").exec();
     // let _ = lua.load(core_dispatcher).set_name("core:dispatcher").exec();
 
+    // Snapshot the core on_message dispatcher so we can detect plugins that overwrite it
+    let _ = lua.load("_navi_core_on_message = on_message").exec();
+
     if let Ok(entries) = std::fs::read_dir("plugins") {
         // 1. Collect all valid .lua files into a Vector first
         let mut lua_files = Vec::new();
@@ -150,6 +153,20 @@ pub fn load_plugins(lua: &Lua, interval_registry: &IntervalRegistry) -> (LogLeve
                     error_msg = Some(format!("Error in {:?}: \n{}", p, e));
                     break;
                 }
+
+                // Detect plugins that clobber the core on_message dispatcher
+                let overwritten: bool = lua
+                    .load("return on_message ~= _navi_core_on_message")
+                    .eval()
+                    .unwrap_or(false);
+                if overwritten {
+                    details.push_str(&format!(
+                        "WARN: {:?} overwrote global on_message — use navi.register() instead. Restoring core dispatcher.\n",
+                        p.file_name().unwrap()
+                    ));
+                    let _ = lua.load("on_message = _navi_core_on_message").exec();
+                }
+
                 count += 1;
                 details.push_str(&format!("Loaded: {:?}\n", p.file_name().unwrap()));
             }

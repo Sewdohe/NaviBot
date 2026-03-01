@@ -99,8 +99,9 @@ To get full autocomplete, hover documentation, and type-checking in your editor 
 
 ## Planned Features
 
-- [ ] Implement lists of nested objects as config option and TUI to support it
-- [ ] Add more Discord features to the engine
-- [ ] Bolster the amount of built-in core plugins
-- [ ] Implement handling modal forms
+- [x] ~~Implement lists of nested objects as config option and TUI to support it~~
+- [x] ~~Add more Discord features to the engine~~
+- [x] ~~Bolster the amount of built-in core plugins~~
+- [x] ~~Implement handling modal forms~~
+- [x] ~~Implement plugin repo for user-created plugins~~
 - [ ] Implement ability for lua code to expose custom TUI functionality

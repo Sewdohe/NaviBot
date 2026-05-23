@@ -86,6 +86,7 @@ navi.create_slash("pay", "Send money to another user", {
     -- Execute the transfer
     add_balance(ctx.user_id, -amount)
     add_balance(target_id, amount)
+    navi.emit("economy:transfer", { from = tostring(ctx.user_id), to = tostring(target_id), amount = amount })
 
     navi.send_message(ctx.channel_id, {
       description = "💸 <@" .. ctx.user_id .. "> sent **" .. amount .. " " .. currency .. "** to <@" .. target_id .. ">.",

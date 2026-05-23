@@ -142,6 +142,83 @@ pub fn register(
         Ok(())
     })?)?;
 
+    // --- EDIT EMBED ---
+    let http_edit_embed = ctx.http.clone();
+    navi.set("edit_embed", lua.create_function(move |_, (channel_id, message_id, data): (String, String, LuaTable)| {
+        let http = http_edit_embed.clone();
+
+        let title: Option<String>  = data.get("title").ok();
+        let description: Option<String> = data.get("description").ok();
+        let color: Option<u32>     = data.get("color").ok();
+        let image_url: Option<String> = data.get::<_, String>("image").ok().filter(|s| !s.is_empty());
+        let mut fields = Vec::new();
+        if let Ok(lua_fields) = data.get::<_, Vec<LuaTable>>("fields") {
+            for f in lua_fields {
+                let name: String   = f.get("name").unwrap_or_default();
+                let value: String  = f.get("value").unwrap_or_default();
+                let inline: bool   = f.get("inline").unwrap_or(false);
+                fields.push((name, value, inline));
+            }
+        }
+
+        tokio::spawn(async move {
+            let mut embed = serenity::CreateEmbed::new().color(parse_color(color));
+            if let Some(t) = title       { embed = embed.title(t); }
+            if let Some(d) = description { embed = embed.description(d); }
+            for (n, v, i) in fields      { embed = embed.field(n, v, i); }
+            if let Some(img) = image_url { embed = embed.image(img); }
+
+            let c_id = serenity::ChannelId::new(channel_id.parse().unwrap_or(0));
+            let m_id = serenity::MessageId::new(message_id.parse().unwrap_or(0));
+            let _ = c_id.edit_message(&http, m_id, serenity::EditMessage::new().embed(embed)).await;
+        });
+        Ok(())
+    })?)?;
+
+    // --- SEND MESSAGE SYNC (embed, returns message ID) ---
+    let http_send_sync = ctx.http.clone();
+    let tx_send_sync   = tui_tx.clone();
+    navi.set("send_message_sync", lua.create_function(move |lua, (channel_id, data): (String, LuaTable)| {
+        let http = http_send_sync.clone();
+        let tx   = tx_send_sync.clone();
+
+        let title: Option<String>  = data.get("title").ok();
+        let description: Option<String> = data.get("description").ok();
+        let color: Option<u32>     = data.get("color").ok();
+        let image_url: Option<String> = data.get::<_, String>("image").ok().filter(|s| !s.is_empty());
+        let mut fields = Vec::new();
+        if let Ok(lua_fields) = data.get::<_, Vec<LuaTable>>("fields") {
+            for f in lua_fields {
+                let name: String   = f.get("name").unwrap_or_default();
+                let value: String  = f.get("value").unwrap_or_default();
+                let inline: bool   = f.get("inline").unwrap_or(false);
+                fields.push((name, value, inline));
+            }
+        }
+
+        let result = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async move {
+                let mut embed = serenity::CreateEmbed::new().color(parse_color(color));
+                if let Some(t) = title       { embed = embed.title(t); }
+                if let Some(d) = description { embed = embed.description(d); }
+                for (n, v, i) in fields      { embed = embed.field(n, v, i); }
+                if let Some(img) = image_url { embed = embed.image(img); }
+
+                let msg = serenity::CreateMessage::new().embed(embed);
+                let c_id = serenity::ChannelId::new(channel_id.parse().unwrap_or(0));
+                c_id.send_message(&http, msg).await
+            })
+        });
+
+        match result {
+            Ok(msg) => Ok(mlua::Value::String(lua.create_string(&msg.id.get().to_string())?)),
+            Err(e) => {
+                let _ = tx.send(BotEvent::Log(LogLevel::Error, format!("send_message_sync failed: {}", e)));
+                Ok(mlua::Value::Nil)
+            }
+        }
+    })?)?;
+
     // --- DELETE MESSAGE ---
     let http_del_msg = ctx.http.clone();
     navi.set("delete_message", lua.create_function(move |_, (channel_id, message_id): (String, String)| {

@@ -4,39 +4,9 @@ This document is the complete guide for writing Lua plugins for the Navi Bot eng
 
 ---
 
-## Table of Contents
+# Getting Started
 
-1. [How Plugins Work](#1-how-plugins-work)
-2. [Plugin Anatomy](#2-plugin-anatomy)
-3. [Logging](#3-logging)
-4. [Configuration (TUI Dashboard)](#4-configuration-tui-dashboard)
-5. [Database](#5-database)
-6. [Message Listeners](#6-message-listeners)
-7. [Slash Commands](#7-slash-commands)
-8. [Slash Command Context](#8-slash-command-context)
-9. [Buttons and Select Menus](#9-buttons-and-select-menus)
-10. [Component Context](#10-component-context)
-11. [Modal Dialogs](#11-modal-dialogs)
-12. [Modal Context](#12-modal-context)
-13. [Embeds and Components (UI)](#13-embeds-and-components-ui)
-14. [Inter-Plugin Event Bus](#14-inter-plugin-event-bus)
-15. [Global Event Callbacks](#15-global-event-callbacks)
-16. [Messaging API](#16-messaging-api)
-17. [Member & Role Management](#17-member--role-management)
-18. [Channel Management](#18-channel-management)
-19. [Discord Cache](#19-discord-cache)
-20. [HTTP Client](#20-http-client)
-21. [JSON](#21-json)
-22. [Timed Intervals](#22-timed-intervals)
-23. [Permissions](#23-permissions)
-24. [Plugin Load Order](#24-plugin-load-order)
-25. [Bot Status / Presence](#25-bot-status--presence)
-26. [Data Type Reference](#26-data-type-reference)
-27. [Patterns, Tips & Common Mistakes](#27-patterns-tips--common-mistakes)
-
----
-
-## 1. How Plugins Work
+## How Plugins Work
 
 Every `.lua` file placed in the `plugins/` directory is a **plugin**. The Rust engine:
 
@@ -51,9 +21,7 @@ All plugin code runs at the top level of the file during loading. This is where 
 
 > **No sandbox:** All plugins share the same Lua globals. Be careful not to overwrite another plugin's globals accidentally — use `local` for everything that doesn't need to be shared.
 
----
-
-## 2. Plugin Anatomy
+## Plugin Anatomy
 
 A well-structured plugin follows this order:
 
@@ -101,9 +69,34 @@ navi.on("economy:balance_changed", function(data)
 end)
 ```
 
----
+## Plugin Load Order
 
-## 3. Logging
+By default, plugins load in alphabetical order. If your plugin uses data or functions from another plugin (e.g. casino reading economy balances), you need to make sure the dependency loads first.
+
+### `navi.depends_on(plugin_name)`
+
+Declares that this plugin depends on another. The Rust engine scans for these calls **before** executing any Lua and performs a topological sort to ensure dependencies load first.
+
+Call this at the **very top** of your file, before any other code.
+
+```lua
+-- casino.lua
+navi.depends_on("economy")  -- economy.lua will always load before casino.lua
+
+navi.log.info("Loading Casino Plugin")
+-- ...
+```
+
+You can declare multiple dependencies:
+
+```lua
+navi.depends_on("economy")
+navi.depends_on("leveling")
+```
+
+> **Note:** `navi.depends_on` is a **no-op at runtime** — it does nothing when Lua actually executes it. Its only job is to be visible in the source file for the Rust loader to scan.
+
+## Logging
 
 Use `navi.log` to write structured messages to the TUI log pane. This is far better than `print()` because it respects log levels and is visible in the dashboard.
 
@@ -114,14 +107,16 @@ navi.log.error("Something went wrong: " .. tostring(err))
 ```
 
 | Function | Color | When to use |
-|---|---|---|
+| --- | --- | --- |
 | `navi.log.info(msg)` | White | Normal status messages, load notices |
 | `navi.log.warn(msg)` | Yellow | Non-fatal problems, missing optional config |
 | `navi.log.error(msg)` | Red | Failures that affect functionality |
 
 ---
 
-## 4. Configuration (TUI Dashboard)
+# Configuration
+
+## Registering Config
 
 ### `navi.register_config(plugin_name, schema)`
 
@@ -138,10 +133,10 @@ navi.register_config("my_plugin", {
 })
 ```
 
-#### Config Item Fields
+### Config Item Fields
 
 | Field | Type | Required | Description |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `key` | string | Yes | The DB key used to store the value. Read back as `config:plugin_name:key`. |
 | `name` | string | Yes | Human-readable label shown in the TUI. |
 | `description` | string | Yes | Help text shown below the field in the TUI. |
@@ -150,10 +145,10 @@ navi.register_config("my_plugin", {
 | `item_schema` | table | Only for `list` | Defines the sub-fields of each list item. |
 | `options` | string[] | Only for `enum` | The allowed values shown in the TUI dropdown. |
 
-#### Config Types
+### Config Types
 
 | Type | TUI Widget | Notes |
-|---|---|---|
+| --- | --- | --- |
 | `"string"` | Text input | Free-form text |
 | `"number"` | Number input | Stored as a string; use `tonumber()` when reading |
 | `"boolean"` | Toggle | `true` / `false` |
@@ -163,7 +158,7 @@ navi.register_config("my_plugin", {
 | `"list"` | Expandable list | Each item is a sub-table; requires `item_schema` |
 | `"enum"` | Option dropdown | Stores one of the strings declared in `options`; requires `options` |
 
-#### Reading Config Values
+## Reading Config Values
 
 Config values are stored with the key format `config:plugin_name:key`. You read them with `navi.db.get`:
 
@@ -173,7 +168,9 @@ local max     = tonumber(navi.db.get("config:my_plugin:max_points")) or 1000
 local enabled = navi.db.get("config:my_plugin:enabled") == "true"
 ```
 
-#### List Config
+> **The `"config:"` prefix:** `navi.db.get` auto-namespacing does **not** apply to `config:` keys (the `config:` prefix already makes the key explicit). Always use the full key path when reading config values manually.
+
+## List Config
 
 A `list` config field stores multiple structured items — for example, a list of level-up role rewards. Define the sub-fields with `item_schema` and read them back with `navi.db.get_list`.
 
@@ -190,7 +187,6 @@ navi.register_config("leveling", {
 -- Reading the list back:
 local rewards = navi.db.get_list("config:leveling:role_rewards")
 for _, item in ipairs(rewards) do
-    -- item.level and item.role_id are available as strings
     navi.log.info("Level " .. item.level .. " → Role " .. item.role_id)
 end
 ```
@@ -198,7 +194,7 @@ end
 Each entry in `item_schema` supports these fields:
 
 | Field | Required | Description |
-|---|---|---|
+| --- | --- | --- |
 | `key` | Yes | The key used inside each item table |
 | `name` | Yes | Human-readable label shown in the TUI |
 | `type` | Yes | Sub-field input type (see below) |
@@ -207,7 +203,7 @@ Each entry in `item_schema` supports these fields:
 **Sub-field types** (all types except `"list"` are allowed):
 
 | Type | TUI Widget |
-|---|---|
+| --- | --- |
 | `"string"` | Text input |
 | `"number"` | Text input (use `tonumber()` when reading) |
 | `"boolean"` | Toggle |
@@ -216,9 +212,9 @@ Each entry in `item_schema` supports these fields:
 | `"category"` | Category picker |
 | `"enum"` | Option dropdown — requires `options` |
 
-#### Enum Config
+## Enum Config
 
-Use `type = "enum"` when a field (top-level or inside a list's `item_schema`) must be one of a fixed set of strings. The TUI shows a green dropdown instead of a free-text box, preventing invalid input.
+Use `type = "enum"` when a field must be one of a fixed set of strings. The TUI shows a dropdown instead of a free-text box, preventing invalid input.
 
 ```lua
 -- Top-level enum field
@@ -251,11 +247,11 @@ navi.register_config("permissions", {
 
 ---
 
-## 5. Database
+# Database
 
-The database is a single SQLite table (`kv_store`) with `key` and `value` columns. All values are stored as strings. The Lua API gives you get/set, raw SQL queries, and list helpers.
+The database is a single SQLite table (`kv_store`) with `key` and `value` columns. All values are stored as strings.
 
-### Automatic Namespacing
+## Automatic Namespacing
 
 `navi.db.get` and `navi.db.set` **automatically prepend the calling plugin's filename** as a namespace. A call to `navi.db.get("score")` from `trivia.lua` actually reads the key `trivia:score`.
 
@@ -268,7 +264,7 @@ local balance = navi.db.get("economy:balance:" .. user_id)
 
 This is intentional. Cross-plugin data access is fine as long as you know the key format.
 
-### `navi.db.get(key)`
+## `navi.db.get(key)`
 
 Reads a value from the database.
 
@@ -282,7 +278,7 @@ end
 local xp_num = tonumber(xp) or 0
 ```
 
-### `navi.db.set(key, value)`
+## `navi.db.set(key, value)`
 
 Writes a value to the database. Creates the key if it doesn't exist; overwrites it if it does.
 
@@ -296,7 +292,7 @@ navi.db.set("enabled", true)      -- stored as "true"
 
 > **Important:** Always use `tonumber()` when reading a value you intend to do math with. The database always gives you strings back.
 
-### `navi.db.query(sql)`
+## `navi.db.query(sql)`
 
 Executes a raw SQL statement against the `kv_store` table. Returns an array of row tables.
 
@@ -312,13 +308,12 @@ local rows = navi.db.query(
 )
 
 for i, row in ipairs(rows) do
-    -- Extract the user_id from the key "leveling:xp:<user_id>"
     local user_id = row.key:match("leveling:xp:(.+)")
     navi.log.info(i .. ". " .. user_id .. " — " .. row.value .. " XP")
 end
 ```
 
-### `navi.db.get_list(key)`
+## `navi.db.get_list(key)`
 
 Reads a `list`-type config field (registered with `navi.register_config`) and returns it as an array of tables. Each table has the keys defined in `item_schema`.
 
@@ -331,7 +326,9 @@ end
 
 ---
 
-## 6. Message Listeners
+# Commands & Interactions
+
+## Message Listeners
 
 ### `navi.register(callback)`
 
@@ -339,20 +336,18 @@ Registers a function that is called every time any message is sent in a channel 
 
 ```lua
 navi.register(function(msg)
-    -- Always ignore bots to prevent feedback loops
     if msg.author_bot then return end
 
-    -- React to a specific word
     if msg.content:lower():find("good bot") then
         navi.react(tostring(msg.channel_id), tostring(msg.message_id), "❤️")
     end
 end)
 ```
 
-#### Message Object (`msg`)
+### Message Object (`msg`)
 
 | Field | Type | Description |
-|---|---|---|
+| --- | --- | --- |
 | `msg.content` | string | The text of the message |
 | `msg.message_id` | number | The message's snowflake ID |
 | `msg.channel_id` | number | The channel's snowflake ID |
@@ -366,9 +361,7 @@ end)
 
 > **Tip:** `msg.author_id` and `msg.channel_id` are numbers. Use `tostring()` when passing them to `navi.db.set`, string concatenation, or functions that expect a string.
 
----
-
-## 7. Slash Commands
+## Slash Commands
 
 ### `navi.create_slash(name, description, options, callback)`
 
@@ -377,54 +370,47 @@ Registers a slash command. After registering, slash commands are automatically s
 - `name` (string): The command name. Lowercase, no spaces (e.g. `"balance"`).
 - `description` (string): The help text shown in Discord's command picker.
 - `options` (table): A list of argument definitions. Pass `{}` if the command takes no arguments.
-- `callback` (function): Called when the command is used. Receives a `ctx` object (see [Section 8](#8-slash-command-context)).
+- `callback` (function): Called when the command is used. Receives a `ctx` object.
 
 ```lua
--- A simple no-argument command
 navi.create_slash("ping", "Check if the bot is alive", {}, function(ctx)
     ctx.reply("Pong! 🏓")
 end)
 ```
 
 ```lua
--- A command with arguments
 navi.create_slash("greet", "Greet a user", {
     { name = "user",   description = "Who to greet", type = "user",    required = true  },
     { name = "shout",  description = "Shout it?",    type = "boolean", required = false }
 }, function(ctx)
-    local target = ctx.args.user    -- a user snowflake ID string
-    local shout  = ctx.args.shout   -- a boolean (true/false) or nil if not provided
-
+    local target = ctx.args.user
+    local shout  = ctx.args.shout
     local message = "Hey, <@" .. target .. ">!"
-    if shout then
-        message = string.upper(message)
-    end
+    if shout then message = string.upper(message) end
     ctx.reply(message)
 end)
 ```
 
-#### Command Grouping
+### Command Grouping
 
 If a single plugin file registers **two or more** slash commands, Discord automatically groups them under the plugin's filename as a **parent command**. For example, a plugin named `casino.lua` that calls `create_slash` for `coinflip`, `slots`, and `dice` will appear in Discord as `/casino coinflip`, `/casino slots`, and `/casino dice`.
 
-If a plugin only registers **one** command, it stays flat (e.g. `/rank` from `leveling.lua` would stay as `/rank` if it were the only command, but since `leveling.lua` registers two commands it becomes `/leveling rank`).
+If a plugin only registers **one** command, it stays flat. This is fully automatic — you don't need to change any Lua code.
 
-This is fully automatic — you don't need to change any Lua code.
-
-#### Slash Option Fields
+### Slash Option Fields
 
 | Field | Type | Required | Description |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `name` | string | Yes | Argument name (lowercase, no spaces) |
 | `description` | string | Yes | Help text in Discord |
 | `type` | string | Yes | See option types below |
 | `required` | boolean | No | Whether the user must provide this arg. Default: `false` |
 | `autocomplete` | function | No | If set, Discord calls this as the user types. See below. |
 
-#### Option Types
+### Option Types
 
 | Type | Lua value in `ctx.args` | Notes |
-|---|---|---|
+| --- | --- | --- |
 | `"string"` | `string` | Plain text |
 | `"integer"` | `number` | Whole number; safe to use directly in math |
 | `"number"` | `number` | Float/decimal |
@@ -435,9 +421,9 @@ This is fully automatic — you don't need to change any Lua code.
 
 > **Note:** `user`, `channel`, and `role` options give you an ID string, not the full object. Use `navi.get_member` if you need more info about a user.
 
-#### Autocomplete
+### Autocomplete
 
-If an option has a function in its `autocomplete` field, Discord will call that function as the user types in that argument slot. Your function receives a context table and must return up to 25 `{name, value}` pairs.
+If an option has a function in its `autocomplete` field, Discord calls it as the user types. Your function receives a context table and must return up to 25 `{name, value}` pairs.
 
 ```lua
 navi.create_slash("give_item", "Give an item to a user", {
@@ -447,7 +433,6 @@ navi.create_slash("give_item", "Give an item to a user", {
         type = "string",
         required = true,
         autocomplete = function(ctx)
-            -- ctx.current_value is what the user has typed so far
             local all_items = { "Sword", "Shield", "Potion", "Arrow", "Staff" }
             local results = {}
             for _, item in ipairs(all_items) do
@@ -464,20 +449,19 @@ end)
 ```
 
 The `autocomplete` callback receives:
+
 | Field | Type | Description |
-|---|---|---|
+| --- | --- | --- |
 | `ctx.current_value` | string | What the user has typed so far (may be empty) |
 | `ctx.user_id` | string | The user's snowflake ID |
 | `ctx.guild_id` | string\|nil | The guild's snowflake ID |
 
----
-
-## 8. Slash Command Context
+## Slash Command Context
 
 The `ctx` object passed to a slash command callback.
 
 | Field / Method | Type | Description |
-|---|---|---|
+| --- | --- | --- |
 | `ctx.user_id` | number | The invoking user's snowflake ID |
 | `ctx.username` | string | The invoking user's username |
 | `ctx.channel_id` | string | The channel's snowflake ID |
@@ -491,31 +475,14 @@ The `ctx` object passed to a slash command callback.
 | `ctx.followup_embed(data, ephemeral?)` | function | Send an embed follow-up after `ctx.defer()` |
 | `ctx.modal(custom_id, title, fields)` | function | Respond with a modal dialog form |
 
-### `ctx.reply(message, ephemeral?)`
-
-Sends a plain-text response to the slash command. This is the standard way to respond.
-
-- `message` (string): The text to send.
-- `ephemeral` (boolean, optional): If `true`, only the user who ran the command can see the response. Default: `false`.
+### `ctx.reply` and `ctx.reply_embed`
 
 ```lua
 ctx.reply("Done!")
 ctx.reply("This is a secret.", true)  -- only you can see this
-```
 
-> **One response per interaction.** Discord only allows one direct response per command invocation. If you want to send a public embed as well as a silent acknowledgement, use `navi.send_message` for the embed and `ctx.reply("...", true)` for the hidden confirmation.
-
-### `ctx.reply_embed(data, ephemeral?)`
-
-Sends a rich embed as the direct response to the command.
-
-- `data` (table): An embed table. See [Section 13](#13-embeds-and-components-ui) for the full structure.
-- `ephemeral` (boolean, optional): If `true`, only the invoking user sees it.
-
-```lua
 ctx.reply_embed({
     title = "Your Stats",
-    description = "Here is your profile.",
     color = 0x3498DB,
     fields = {
         { name = "Level", value = "12", inline = true },
@@ -524,22 +491,19 @@ ctx.reply_embed({
 }, true)
 ```
 
-### `ctx.defer(ephemeral?)` + `ctx.followup()`
+> **One response per interaction.** Discord only allows one direct response per command invocation. If you want to send a public embed as well as a silent acknowledgement, use `navi.send_message` for the embed and `ctx.reply("...", true)` for the hidden confirmation.
 
-For commands that take more than ~3 seconds (API calls, heavy computation), you must **defer** first. Deferring tells Discord "I received this, give me a moment" which prevents the "This application did not respond" error.
+### `ctx.defer()` and `ctx.followup()`
 
-`ctx.defer` **blocks** until Discord confirms the acknowledgment, so it is safe to do slow work immediately after calling it.
+For commands that take more than ~3 seconds, you must **defer** first to prevent the "This application did not respond" error.
 
 ```lua
 navi.create_slash("slow_command", "Fetches data from the web", {}, function(ctx)
-    -- Tell Discord to wait
     ctx.defer()
 
-    -- Now do the slow work
     local body = navi.http.get("https://api.example.com/data", nil)
     local data = body and navi.json.decode(body)
 
-    -- Respond with a follow-up (can be called multiple times)
     if data then
         ctx.followup("Got it: " .. tostring(data.result))
     else
@@ -548,71 +512,33 @@ navi.create_slash("slow_command", "Fetches data from the web", {}, function(ctx)
 end)
 ```
 
-`ctx.followup_embed(data, ephemeral?)` works the same way but sends an embed:
+`ctx.followup_embed(data, ephemeral?)` works the same way but sends an embed.
 
-```lua
-ctx.defer()
--- ... do slow work ...
-ctx.followup_embed({
-    title = "Result",
-    description = "Here's what I found."
-})
-```
+### Opening a Modal from a Command
 
-### `ctx.modal(custom_id, title, fields)`
-
-Instead of replying with a message, you can open a **modal dialog** (a popup form). The user fills it in and submits. You handle the submission with `navi.register_modal`.
-
-> **Note:** A modal is a response to the interaction — you cannot also call `ctx.reply` in the same handler. Choose one or the other.
-
-- `custom_id` (string): Identifier used to match the modal to its `register_modal` handler.
-- `title` (string): The title of the popup window.
-- `fields` (table): List of text input definitions.
+Instead of replying, you can respond with a modal dialog (a popup form):
 
 ```lua
 navi.create_slash("feedback", "Submit feedback", {}, function(ctx)
     ctx.modal("feedback_form", "Share Your Feedback", {
-        { id = "subject",  label = "Subject",          style = "short",     placeholder = "Brief topic",    required = true  },
-        { id = "body",     label = "Your feedback",    style = "paragraph", placeholder = "Tell us more…",  required = true  },
-        { id = "rating",   label = "Rating (1-10)",    style = "short",     placeholder = "e.g. 8",         required = false },
+        { id = "subject", label = "Subject",       style = "short",     placeholder = "Brief topic",   required = true  },
+        { id = "body",    label = "Your feedback", style = "paragraph", placeholder = "Tell us more…", required = true  },
+        { id = "rating",  label = "Rating (1-10)", style = "short",     placeholder = "e.g. 8",        required = false },
     })
-end)
-
-navi.register_modal("feedback_form", function(ctx)
-    local subject = ctx.values.subject
-    local body    = ctx.values.body
-    local rating  = ctx.values.rating or "not given"
-
-    navi.say(FEEDBACK_CHANNEL, "**Feedback from " .. ctx.username .. "**\n**" .. subject .. "**\n" .. body .. "\nRating: " .. rating)
-    ctx.reply("Thanks for your feedback!", true)
 end)
 ```
 
-#### Modal Field Definition
+> **Note:** A modal is a response to the interaction — you cannot also call `ctx.reply` in the same handler.
 
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `id` | string | Yes | Key used to read the value in `ctx.values` |
-| `label` | string | Yes | The label shown above the input |
-| `style` | `"short"` \| `"paragraph"` | No | Single-line vs multi-line input. Default: `"short"` |
-| `placeholder` | string | No | Greyed-out hint text |
-| `required` | boolean | No | Whether the user must fill this in. Default: `true` |
+## Buttons and Select Menus
 
----
-
-## 9. Buttons and Select Menus
-
-Buttons and select menus are attached to messages via the `components` field in an embed table (see [Section 13](#13-embeds-and-components-ui)). When clicked or selected, they fire a `register_component` handler.
+Buttons and select menus are attached to messages via the `components` field in an embed table. When clicked or selected, they fire a `register_component` handler.
 
 ### `navi.register_component(custom_id, callback)`
 
 Registers a handler function that fires when a button with the matching `custom_id` is clicked, or when a select menu with the matching `id` has its value changed.
 
-- `custom_id` (string): The ID you put in the `id` field of the button or select menu.
-- `callback` (function): Called with a `NaviComponentCtx` object.
-
 ```lua
--- Send a message with a button
 navi.send_message(channel_id, {
     description = "Click the button!",
     components = {
@@ -620,25 +546,22 @@ navi.send_message(channel_id, {
     }
 })
 
--- Handle the click
 navi.register_component("my_button", function(ctx)
-    ctx.reply("You clicked the button, " .. ctx.username .. "!", true)
+    ctx.reply("You clicked it, " .. ctx.username .. "!", true)
 end)
 ```
 
-#### Button Styles
+### Button Styles
 
 | Style | Color | Use for |
-|---|---|---|
+| --- | --- | --- |
 | `"primary"` | Blue | Main action |
 | `"secondary"` | Grey | Secondary/neutral action |
 | `"success"` | Green | Confirming or positive action |
 | `"danger"` | Red | Destructive or risky action |
 | `"link"` / `"url"` | Grey (opens URL) | External links — requires a `url` field instead of `id` |
 
-#### Link Buttons
-
-Link buttons open a URL instead of triggering an interaction. They do not need a `register_component` handler.
+Link buttons open a URL and do not need a `register_component` handler:
 
 ```lua
 components = {
@@ -646,9 +569,7 @@ components = {
 }
 ```
 
-#### Select Menus
-
-A string-select dropdown. The selected value(s) are available in `ctx.values` inside the handler.
+### Select Menus
 
 ```lua
 navi.send_message(channel_id, {
@@ -673,14 +594,12 @@ navi.register_component("color_picker", function(ctx)
 end)
 ```
 
----
-
-## 10. Component Context
+## Component Context
 
 The `ctx` object passed to a `register_component` handler.
 
 | Field / Method | Type | Description |
-|---|---|---|
+| --- | --- | --- |
 | `ctx.custom_id` | string | The `id` of the clicked button or selected menu |
 | `ctx.user_id` | string | The snowflake ID of the user who clicked |
 | `ctx.username` | string | The username of the user who clicked |
@@ -692,42 +611,37 @@ The `ctx` object passed to a `register_component` handler.
 | `ctx.reply_embed(data, ephemeral?)` | function | Reply with an embed |
 | `ctx.modal(custom_id, title, fields)` | function | Respond with a modal dialog |
 
-```lua
-navi.register_component("btn_verify_human", function(ctx)
-    local role_id = navi.db.get("config:verification:verified_role")
-    if not role_id or role_id == "" then
-        ctx.reply("Not configured yet.", true)
-        return
-    end
-    navi.add_role(ctx.guild_id, ctx.user_id, role_id)
-    ctx.reply("✅ You are now verified! Welcome.", true)
-end)
-```
-
----
-
-## 11. Modal Dialogs
+## Modal Dialogs
 
 ### `navi.register_modal(custom_id, callback)`
 
-Registers a handler for when a user submits a modal form with the matching `custom_id`. The `custom_id` must match what was passed to `ctx.modal(...)` when the modal was opened.
+Registers a handler for when a user submits a modal form. The `custom_id` must match what was passed to `ctx.modal(...)`.
 
 ```lua
-navi.register_modal("report_form", function(ctx)
-    local reason = ctx.values.reason
-    navi.say(LOG_CHANNEL, ctx.username .. " filed a report: " .. reason)
-    ctx.reply("Your report was received.", true)
+navi.register_modal("feedback_form", function(ctx)
+    local subject = ctx.values.subject
+    local body    = ctx.values.body
+    local rating  = ctx.values.rating or "not given"
+
+    navi.say(FEEDBACK_CHANNEL, "**" .. subject .. "**\n" .. body .. "\nRating: " .. rating)
+    ctx.reply("Thanks for your feedback!", true)
 end)
 ```
 
----
+### Modal Field Definition
 
-## 12. Modal Context
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `id` | string | Yes | Key used to read the value in `ctx.values` |
+| `label` | string | Yes | The label shown above the input |
+| `style` | `"short"` \| `"paragraph"` | No | Single-line vs multi-line input. Default: `"short"` |
+| `placeholder` | string | No | Greyed-out hint text |
+| `required` | boolean | No | Whether the user must fill this in. Default: `true` |
 
-The `ctx` object passed to a `register_modal` handler.
+### Modal Context
 
 | Field / Method | Type | Description |
-|---|---|---|
+| --- | --- | --- |
 | `ctx.custom_id` | string | The modal's `custom_id` |
 | `ctx.user_id` | string | The submitting user's snowflake ID |
 | `ctx.username` | string | The submitting user's username |
@@ -740,268 +654,9 @@ The `ctx` object passed to a `register_modal` handler.
 
 ---
 
-## 13. Embeds and Components (UI)
+# Messaging & Discord API
 
-An embed is a rich message card. You pass the same embed table structure to `navi.send_message`, `ctx.reply_embed`, and `ctx.followup_embed`.
-
-### Embed Table Structure
-
-```lua
-{
-    title       = "Optional title",
-    description = "Main body text. Supports **markdown**.",
-    color       = 0x3498DB,  -- hex color integer
-    image       = "https://example.com/image.png",  -- large image at bottom
-    fields = {
-        { name = "Field 1", value = "Some text",  inline = true  },
-        { name = "Field 2", value = "More text",  inline = true  },
-        { name = "Long one", value = "Full width", inline = false },
-    },
-    components = {
-        -- Buttons and/or a select menu (see below)
-    }
-}
-```
-
-All fields are optional. You can use any combination.
-
-| Field | Type | Description |
-|---|---|---|
-| `title` | string | Bold title at the top |
-| `description` | string | Main body text (supports Discord markdown) |
-| `color` | number | Hex color as an integer, e.g. `0xFF0000` for red |
-| `image` | string | URL of a large image to display at the bottom |
-| `fields` | table | Array of `{name, value, inline?}` objects |
-| `components` | table | Array of buttons and/or one select menu |
-
-#### Embed Fields
-
-```lua
-fields = {
-    { name = "Level",  value = "42",      inline = true  },
-    { name = "XP",     value = "12,500",  inline = true  },
-    { name = "Status", value = "Active",  inline = false },
-}
-```
-
-When `inline = true`, up to 3 fields display side-by-side. Use `inline = false` (or omit it) for fields that should take the full width.
-
-#### Components in Embeds
-
-You can attach up to 5 buttons and/or 1 select menu to any message. Mix them freely in the `components` array — the engine lays them out into Discord action rows automatically.
-
-```lua
-navi.send_message(channel_id, {
-    title = "Choose your role",
-    color = 0x5865F2,
-    components = {
-        { type = "button", id = "role_warrior",  label = "Warrior",  style = "primary"   },
-        { type = "button", id = "role_mage",     label = "Mage",     style = "primary"   },
-        { type = "button", id = "role_rogue",    label = "Rogue",    style = "secondary" },
-        {
-            type = "select",
-            id = "faction_picker",
-            placeholder = "Pick a faction…",
-            options = {
-                { label = "Alliance", value = "alliance" },
-                { label = "Horde",    value = "horde"    },
-            }
-        }
-    }
-})
-```
-
-#### Common Colors
-
-```lua
-0x2ECC71  -- Emerald green  (success)
-0xE74C3C  -- Alizarin red   (error / danger)
-0xF1C40F  -- Sunflower gold (warning / economy)
-0x3498DB  -- Peter River blue (info)
-0x5865F2  -- Discord blurple
-0x99AAB5  -- Grey/neutral
-0x000000  -- Black (removes the color bar)
-```
-
----
-
-## 14. Inter-Plugin Event Bus
-
-The event bus lets plugins talk to each other without direct coupling. One plugin emits an event; any number of other plugins can listen for it.
-
-### `navi.emit(event_name, data)`
-
-Publishes an event to all current listeners.
-
-- `event_name` (string): A namespaced string. Convention: `"plugin_name:event"`.
-- `data` (any): Data passed to the listeners. Usually a table.
-
-```lua
--- In economy.lua, after a balance change
-navi.emit("economy:balance_changed", {
-    user_id       = user_id,
-    old_balance   = old_balance,
-    new_balance   = new_balance,
-    amount_changed = amount
-})
-```
-
-### `navi.on(event_name, callback)`
-
-Subscribes to an event. The callback receives whatever data was passed to `emit`.
-
-```lua
--- In leveling.lua, listen for economy changes
-navi.on("economy:balance_changed", function(data)
-    navi.log.info(data.user_id .. " now has " .. data.new_balance .. " credits")
-end)
-```
-
-#### Built-in Events
-
-The engine itself emits one event:
-
-| Event | Data | Description |
-|---|---|---|
-| `"message"` | `NaviMsg` | Fired for every message (same data as `navi.register`) |
-| `"member_join"` | `{user_id, username, guild_id}` | Fired when a new member joins the guild |
-
-You can use `navi.on("message", ...)` as an alternative to `navi.register`. Both work identically.
-
-```lua
--- Alternative to navi.register
-navi.on("message", function(msg)
-    if msg.content == "!hello" then
-        navi.say(msg.channel_id, "Hi!")
-    end
-end)
-```
-
-#### Public Plugin APIs
-
-The economy plugin exposes two events as a "public API" that any other plugin can call:
-
-```lua
--- Give a user money (from any plugin)
-navi.emit("economy:add", { user_id = user_id, amount = 50 })
-
--- Take money from a user (from any plugin)
-navi.emit("economy:remove", { user_id = user_id, amount = 25 })
-```
-
-This is the recommended pattern for inter-plugin data modification. It avoids tight coupling and keeps the economy logic in one place.
-
----
-
-## 15. Global Event Callbacks
-
-These are **optional global functions** you can define in your plugin. If the engine sees them, it calls them when the corresponding Discord event fires.
-
-### `on_reaction_add` and `on_reaction_remove`
-
-Called when a reaction is added or removed from any message.
-
-```lua
-function on_reaction_add(ctx)
-    -- ctx.user_id, ctx.channel_id, ctx.message_id, ctx.guild_id, ctx.emoji
-    if ctx.emoji == "⭐" then
-        navi.say(STARBOARD_CHANNEL, "Starred message: " .. ctx.message_id)
-    end
-end
-
-function on_reaction_remove(ctx)
-    navi.log.info(ctx.user_id .. " removed " .. ctx.emoji)
-end
-```
-
-| Field | Type | Description |
-|---|---|---|
-| `ctx.user_id` | string\|nil | The user who reacted |
-| `ctx.channel_id` | string | The channel containing the message |
-| `ctx.message_id` | string | The message that was reacted to |
-| `ctx.guild_id` | string\|nil | The guild, or `nil` in DMs |
-| `ctx.emoji` | string | Unicode emoji or `<:name:id>` for custom emojis |
-
-### `on_member_leave`
-
-Called when a member leaves or is removed from the server.
-
-```lua
-function on_member_leave(data)
-    navi.say(LOG_CHANNEL, "👋 " .. data.username .. " has left the server.")
-end
-```
-
-| Field | Type | Description |
-|---|---|---|
-| `data.user_id` | string | The user's snowflake ID |
-| `data.username` | string | The user's username |
-| `data.guild_id` | string | The guild's snowflake ID |
-
-### `on_message_edit`
-
-Called when any message is edited. Note: `new_content` may be `nil` if Discord's gateway event did not include the message body (common for cached messages).
-
-```lua
-function on_message_edit(data)
-    if data.new_content then
-        navi.log.info("Message " .. data.message_id .. " edited: " .. data.new_content)
-    end
-end
-```
-
-| Field | Type | Description |
-|---|---|---|
-| `data.message_id` | string | The edited message's snowflake ID |
-| `data.channel_id` | string | The channel's snowflake ID |
-| `data.guild_id` | string\|nil | The guild's snowflake ID |
-| `data.new_content` | string\|nil | The new text content, or `nil` if unavailable |
-
-### `on_message_delete`
-
-Called when a message is deleted.
-
-```lua
-function on_message_delete(data)
-    navi.log.warn("Message deleted in channel " .. data.channel_id)
-end
-```
-
-| Field | Type | Description |
-|---|---|---|
-| `data.message_id` | string | The deleted message's snowflake ID |
-| `data.channel_id` | string | The channel's snowflake ID |
-| `data.guild_id` | string\|nil | The guild's snowflake ID |
-
-### `on_voice_state_update`
-
-Called whenever a user's voice state changes — joining a channel, leaving, muting, deafening, going live, etc.
-
-```lua
-function on_voice_state_update(data)
-    if data.channel_id then
-        navi.log.info(data.user_id .. " joined voice: " .. data.channel_id)
-    else
-        navi.log.info(data.user_id .. " left voice entirely")
-    end
-end
-```
-
-| Field | Type | Description |
-|---|---|---|
-| `data.user_id` | string | The user's snowflake ID |
-| `data.guild_id` | string\|nil | The guild's snowflake ID |
-| `data.channel_id` | string\|nil | The channel they are now in, or `nil` if they disconnected |
-| `data.self_mute` | boolean | Whether the user has muted themselves |
-| `data.self_deaf` | boolean | Whether the user has deafened themselves |
-| `data.self_stream` | boolean | Whether the user is streaming (Go Live) |
-| `data.self_video` | boolean | Whether the user has their camera on |
-
-> **Important:** Only one plugin should define each global callback (e.g. `on_reaction_add`). If two plugins both define it, the second one overwrites the first. Use `navi.on("message", ...)` and similar event bus patterns for multi-plugin handling instead.
-
----
-
-## 16. Messaging API
+## Sending Messages
 
 ### `navi.say(channel_id, text)`
 
@@ -1009,7 +664,6 @@ Sends a plain-text message. Fire-and-forget (non-blocking).
 
 ```lua
 navi.say(msg.channel_id, "Hello world!")
-navi.say(tostring(msg.channel_id), "Also works with string IDs")
 ```
 
 ### `navi.say_sync(channel_id, text)`
@@ -1018,14 +672,11 @@ Like `navi.say` but **blocks until the message is sent** and returns the new mes
 
 ```lua
 local msg_id = navi.say_sync(channel_id, "This message was sent synchronously")
-if msg_id then
-    navi.log.info("Sent as message " .. msg_id)
-end
 ```
 
 ### `navi.send_message(channel_id, embed_table)`
 
-Sends a rich embed (with optional buttons/selects). Fire-and-forget. See [Section 13](#13-embeds-and-components-ui) for the full embed structure.
+Sends a rich embed with optional buttons/selects. Fire-and-forget.
 
 ```lua
 navi.send_message(channel_id, {
@@ -1035,9 +686,20 @@ navi.send_message(channel_id, {
 })
 ```
 
+### `navi.send_message_sync(channel_id, embed_table)`
+
+Like `navi.send_message` but **blocks until sent** and returns the message ID as a string, or `nil` on error. Useful when you need to store the message ID for later editing.
+
+```lua
+local message_id = navi.send_message_sync(channel_id, build_embed())
+if message_id then
+    navi.db.set("stats:live_message_id", message_id)
+end
+```
+
 ### `navi.dm(user_id, text)`
 
-Sends a plain-text direct message to a user. Fire-and-forget. If the user has DMs disabled, the error is logged but does not crash the plugin.
+Sends a plain-text direct message to a user. If the user has DMs disabled, the error is logged but does not crash the plugin.
 
 ```lua
 navi.dm(ctx.user_id, "Hey, check this out!")
@@ -1061,6 +723,14 @@ Edits the text content of a message the bot previously sent.
 navi.edit_message(channel_id, message_id, "Updated content")
 ```
 
+### `navi.edit_embed(channel_id, message_id, embed_table)`
+
+Replaces the embed on a message the bot previously sent. Useful for live-updating stat embeds.
+
+```lua
+navi.edit_embed(channel_id, message_id, build_embed())
+```
+
 ### `navi.delete_message(channel_id, message_id)`
 
 Deletes a message.
@@ -1081,7 +751,7 @@ end
 ```
 
 | Field | Type | Description |
-|---|---|---|
+| --- | --- | --- |
 | `fetched.message_id` | string | The message's snowflake ID |
 | `fetched.channel_id` | string | The channel's snowflake ID |
 | `fetched.guild_id` | string\|nil | The guild's snowflake ID |
@@ -1090,9 +760,51 @@ end
 | `fetched.author` | string | The author's username |
 | `fetched.attachments` | string[] | Array of attachment URLs |
 
----
+## Embed Structure
 
-## 17. Member & Role Management
+An embed is a rich message card. You pass the same embed table structure to `navi.send_message`, `ctx.reply_embed`, and `ctx.followup_embed`.
+
+```lua
+{
+    title       = "Optional title",
+    description = "Main body text. Supports **markdown**.",
+    color       = 0x3498DB,
+    image       = "https://example.com/image.png",
+    fields = {
+        { name = "Field 1", value = "Some text",  inline = true  },
+        { name = "Field 2", value = "More text",  inline = true  },
+        { name = "Long one", value = "Full width", inline = false },
+    },
+    components = {
+        -- Buttons and/or a select menu
+    }
+}
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `title` | string | Bold title at the top |
+| `description` | string | Main body text (supports Discord markdown) |
+| `color` | number | Hex color as an integer, e.g. `0xFF0000` for red |
+| `image` | string | URL of a large image to display at the bottom |
+| `fields` | table | Array of `{name, value, inline?}` objects |
+| `components` | table | Array of buttons and/or one select menu |
+
+When `inline = true`, up to 3 fields display side-by-side. Use `inline = false` (or omit it) for full-width fields.
+
+### Common Colors
+
+```lua
+0x2ECC71  -- Emerald green  (success)
+0xE74C3C  -- Alizarin red   (error / danger)
+0xF1C40F  -- Sunflower gold (warning / economy)
+0x3498DB  -- Peter River blue (info)
+0x5865F2  -- Discord blurple
+0x99AAB5  -- Grey/neutral
+0x000000  -- Black (removes the color bar)
+```
+
+## Member & Role Management
 
 ### `navi.add_role(guild_id, user_id, role_id)`
 
@@ -1118,12 +830,11 @@ Fetches live member info from Discord. **Blocks until complete.** Returns a tabl
 local member = navi.get_member(ctx.guild_id, ctx.user_id)
 if member then
     navi.log.info("Display name: " .. member.display_name)
-    navi.log.info("Roles: " .. table.concat(member.roles, ", "))
 end
 ```
 
 | Field | Type | Description |
-|---|---|---|
+| --- | --- | --- |
 | `member.user_id` | string | The member's snowflake ID |
 | `member.username` | string | The member's username |
 | `member.display_name` | string | Nickname if set, otherwise username |
@@ -1133,7 +844,7 @@ end
 
 ### `navi.kick(guild_id, user_id, reason?)`
 
-Kicks a member from the guild. The reason is optional and will appear in the audit log.
+Kicks a member from the guild. The reason appears in the audit log.
 
 ```lua
 navi.kick(ctx.guild_id, target_user_id, "Spam")
@@ -1164,26 +875,24 @@ navi.timeout(ctx.guild_id, target_user_id, 600)  -- 10 minutes
 navi.timeout(ctx.guild_id, target_user_id, 0)    -- remove timeout
 ```
 
----
-
-## 18. Channel Management
+## Channel Management
 
 ### `navi.create_channel(guild_id, name, options)`
 
-Creates a new text channel in the guild. Useful for dynamic systems like tickets.
+Creates a new text channel in the guild.
 
 ```lua
 navi.create_channel(ctx.guild_id, "ticket-username", {
-    category_id     = category_id,      -- place under this category
-    user_id         = ctx.user_id,      -- grant this user private access
-    role_id         = support_role_id,  -- grant this role private access
+    category_id     = category_id,
+    user_id         = ctx.user_id,
+    role_id         = support_role_id,
     welcome_message = "Welcome! Staff will be with you shortly.",
-    close_button    = true              -- attach a red "Close Ticket" button
+    close_button    = true
 })
 ```
 
 | Option | Type | Description |
-|---|---|---|
+| --- | --- | --- |
 | `category_id` | string\|nil | Snowflake ID of the parent category |
 | `user_id` | string\|nil | Grant this user private View + Send permissions |
 | `role_id` | string\|nil | Grant this role private View + Send permissions |
@@ -1192,7 +901,7 @@ navi.create_channel(ctx.guild_id, "ticket-username", {
 
 ### `navi.delete_channel(channel_id)`
 
-Permanently deletes a channel. Use with care — this is instant and irreversible.
+Permanently deletes a channel. This is instant and irreversible.
 
 ```lua
 navi.delete_channel(ctx.channel_id)
@@ -1200,19 +909,11 @@ navi.delete_channel(ctx.channel_id)
 
 ### `navi.create_thread(channel_id, name, options?)`
 
-Creates a thread and returns its channel ID as a string, or `nil` on failure. **Blocks until complete** so you can use the returned ID immediately.
+Creates a thread and returns its channel ID as a string, or `nil` on failure. **Blocks until complete.**
 
 ```lua
--- Standalone public thread
-local thread_id = navi.create_thread(ctx.channel_id, "My Thread")
-
--- Thread attached to a specific message
 local thread_id = navi.create_thread(ctx.channel_id, "Discussion", {
-    message_id = ctx.message_id
-})
-
--- Private thread that archives after an hour
-local thread_id = navi.create_thread(ctx.channel_id, "Private Chat", {
+    message_id   = ctx.message_id,
     private      = true,
     auto_archive = 60
 })
@@ -1223,16 +924,14 @@ end
 ```
 
 | Option | Type | Default | Description |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `message_id` | string\|nil | nil | If set, creates the thread attached to this message |
 | `private` | boolean | false | Create a private thread (invite-only) |
-| `auto_archive` | number | 1440 | Minutes until the thread auto-archives: `60`, `1440`, `4320`, `10080` |
+| `auto_archive` | number | 1440 | Minutes until auto-archive: `60`, `1440`, `4320`, `10080` |
 
----
+## Discord Cache
 
-## 19. Discord Cache
-
-These functions return data from the bot's **cached** guild state. The cache is populated on startup and when you press `u` in the TUI to refresh. For the most up-to-date data, press `u` before relying on these.
+These functions return data from the bot's **cached** guild state. Press `u` in the TUI to refresh the cache.
 
 ### `navi.get_roles(guild_id?)`
 
@@ -1246,7 +945,7 @@ end
 ```
 
 | Field | Type | Description |
-|---|---|---|
+| --- | --- | --- |
 | `role.id` | string | The role's snowflake ID |
 | `role.name` | string | The role's display name |
 | `role.color` | integer[] | RGB tuple: `{r, g, b}` |
@@ -1263,13 +962,220 @@ end
 ```
 
 | Field | Type | Description |
-|---|---|---|
+| --- | --- | --- |
 | `ch.id` | string | The channel's snowflake ID |
 | `ch.name` | string | The channel's display name |
 
+## Bot Status
+
+### `navi.set_status(activity_type, text)`
+
+Changes the bot's Discord presence (the "Playing X" message shown in the member list).
+
+- `activity_type`: `"playing"`, `"listening"`, `"watching"`, `"competing"`, `"custom"`, or `"none"`
+
+```lua
+navi.set_status("watching", "over the server")
+navi.set_status("none", "")  -- clears the status
+```
+
 ---
 
-## 20. HTTP Client
+# Events & Timers
+
+## Inter-Plugin Event Bus
+
+The event bus lets plugins communicate without direct coupling. One plugin emits an event; any number of others can listen for it.
+
+### `navi.emit(event_name, data)`
+
+Publishes an event to all current listeners.
+
+- `event_name` (string): A namespaced string. Convention: `"plugin_name:event"`.
+- `data` (any): Data passed to the listeners. Usually a table.
+
+```lua
+navi.emit("economy:balance_changed", {
+    user_id        = user_id,
+    old_balance    = old_balance,
+    new_balance    = new_balance,
+    amount_changed = amount
+})
+```
+
+### `navi.on(event_name, callback)`
+
+Subscribes to an event. The callback receives whatever data was passed to `emit`.
+
+```lua
+navi.on("economy:balance_changed", function(data)
+    navi.log.info(data.user_id .. " now has " .. data.new_balance .. " credits")
+end)
+```
+
+### Built-in Events
+
+| Event | Data | Description |
+| --- | --- | --- |
+| `"message"` | `NaviMsg` | Fired for every message (same data as `navi.register`) |
+| `"member_join"` | `{user_id, username, guild_id}` | Fired when a new member joins the guild |
+
+You can use `navi.on("message", ...)` as an alternative to `navi.register`. Both work identically.
+
+### Public Plugin APIs via Events
+
+The economy plugin exposes two events as a public API any plugin can use:
+
+```lua
+-- Give a user money (from any plugin)
+navi.emit("economy:add", { user_id = user_id, amount = 50 })
+
+-- Take money from a user (from any plugin)
+navi.emit("economy:remove", { user_id = user_id, amount = 25 })
+```
+
+This is the recommended pattern for cross-plugin data modification. It avoids tight coupling and keeps the economy logic in one place.
+
+## Discord Event Callbacks
+
+These are **optional global functions** you can define in your plugin. If the engine sees them, it calls them when the corresponding Discord event fires.
+
+> **Important:** Only one plugin should define each global callback (e.g. `on_reaction_add`). If two plugins define it, the second one overwrites the first. Use the event bus instead when multiple plugins need the same event.
+
+### `on_reaction_add` and `on_reaction_remove`
+
+```lua
+function on_reaction_add(ctx)
+    if ctx.emoji == "⭐" then
+        navi.say(STARBOARD_CHANNEL, "Starred message: " .. ctx.message_id)
+    end
+end
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `ctx.user_id` | string\|nil | The user who reacted |
+| `ctx.channel_id` | string | The channel containing the message |
+| `ctx.message_id` | string | The message that was reacted to |
+| `ctx.guild_id` | string\|nil | The guild, or `nil` in DMs |
+| `ctx.emoji` | string | Unicode emoji or `<:name:id>` for custom emojis |
+
+### `on_member_leave`
+
+```lua
+function on_member_leave(data)
+    navi.say(LOG_CHANNEL, "👋 " .. data.username .. " has left the server.")
+end
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `data.user_id` | string | The user's snowflake ID |
+| `data.username` | string | The user's username |
+| `data.guild_id` | string | The guild's snowflake ID |
+
+### `on_message_edit`
+
+Called when any message is edited. `new_content` may be `nil` if Discord's gateway event did not include the message body.
+
+```lua
+function on_message_edit(data)
+    if data.new_content then
+        navi.log.info("Message " .. data.message_id .. " edited: " .. data.new_content)
+    end
+end
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `data.message_id` | string | The edited message's snowflake ID |
+| `data.channel_id` | string | The channel's snowflake ID |
+| `data.guild_id` | string\|nil | The guild's snowflake ID |
+| `data.new_content` | string\|nil | The new text content, or `nil` if unavailable |
+
+### `on_message_delete`
+
+```lua
+function on_message_delete(data)
+    navi.log.warn("Message deleted in channel " .. data.channel_id)
+end
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `data.message_id` | string | The deleted message's snowflake ID |
+| `data.channel_id` | string | The channel's snowflake ID |
+| `data.guild_id` | string\|nil | The guild's snowflake ID |
+
+### `on_voice_state_update`
+
+Called whenever a user's voice state changes — joining, leaving, muting, deafening, going live, etc.
+
+```lua
+function on_voice_state_update(data)
+    if data.channel_id then
+        navi.log.info(data.user_id .. " joined voice: " .. data.channel_id)
+    else
+        navi.log.info(data.user_id .. " left voice entirely")
+    end
+end
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `data.user_id` | string | The user's snowflake ID |
+| `data.guild_id` | string\|nil | The guild's snowflake ID |
+| `data.channel_id` | string\|nil | The channel they are now in, or `nil` if they disconnected |
+| `data.self_mute` | boolean | Whether the user has muted themselves |
+| `data.self_deaf` | boolean | Whether the user has deafened themselves |
+| `data.self_stream` | boolean | Whether the user is streaming (Go Live) |
+| `data.self_video` | boolean | Whether the user has their camera on |
+
+## Timed Intervals
+
+### `navi.set_interval(callback, amount, unit?)`
+
+Schedules a function to run repeatedly on a fixed interval. All active intervals are automatically cancelled when plugins are reloaded.
+
+- `unit`: `"ms"` (default), `"s"` / `"seconds"`, `"m"` / `"minutes"`, `"h"` / `"hours"`, `"d"` / `"days"`
+
+```lua
+-- Check for expired polls every 60 seconds
+navi.set_interval(function()
+    local now = os.time()
+    for pid in (navi.db.get("polls:active") or ""):gmatch("[^,]+") do
+        local poll = navi.json.decode(navi.db.get("polls:data:" .. pid) or "")
+        if poll and not poll.closed and now >= poll.expires_at then
+            close_poll(pid)
+        end
+    end
+end, 60, "s")
+```
+
+```lua
+-- Refresh a live embed every 5 minutes
+navi.set_interval(function()
+    local ch = navi.db.get("stats:live_channel_id")
+    local id = navi.db.get("stats:live_message_id")
+    if ch and id then
+        navi.edit_embed(ch, id, build_embed())
+    end
+end, 5, "m")
+```
+
+### `navi.clear_interval(id)`
+
+Cancels a running interval by the ID returned from `set_interval`. No-op if the ID doesn't exist.
+
+```lua
+navi.clear_interval(my_interval)
+```
+
+---
+
+# Utilities
+
+## HTTP Client
 
 ### `navi.http.get(url, headers?)`
 
@@ -1302,20 +1208,17 @@ local response = navi.http.post(
 )
 ```
 
-> **Important:** Both `http.get` and `http.post` block the Lua thread while the request is in flight. For commands that make HTTP calls, use `ctx.defer()` first so Discord doesn't time out while waiting.
+> **Important:** Both `http.get` and `http.post` block the Lua thread while the request is in flight. For commands that make HTTP calls, always call `ctx.defer()` first.
 
----
-
-## 21. JSON
+## JSON
 
 ### `navi.json.encode(value)`
 
 Serializes a Lua table or value to a JSON string.
 
 ```lua
-local poll_data = { title = "Best pet?", options = { "Dog", "Cat" }, closed = false }
-local json_str = navi.json.encode(poll_data)
-navi.db.set("polls:data:1", json_str)
+local data = { title = "Best pet?", options = { "Dog", "Cat" }, closed = false }
+navi.db.set("polls:data:1", navi.json.encode(data))
 ```
 
 ### `navi.json.decode(str)`
@@ -1323,56 +1226,16 @@ navi.db.set("polls:data:1", json_str)
 Parses a JSON string into a Lua value (table, number, string, boolean, or `nil`).
 
 ```lua
-local json_str = navi.db.get("polls:data:1")
-local poll = json_str and navi.json.decode(json_str)
+local raw  = navi.db.get("polls:data:1")
+local poll = raw and navi.json.decode(raw)
 if poll then
     navi.log.info("Poll title: " .. poll.title)
 end
 ```
 
-JSON and the database together are the standard pattern for storing **structured data** (arrays, nested tables) since `navi.db.set` only accepts a flat string.
+JSON and the database together are the standard pattern for storing **structured data** (arrays, nested tables) since `navi.db.set` only accepts flat strings.
 
----
-
-## 22. Timed Intervals
-
-### `navi.set_interval(callback, amount, unit?)`
-
-Schedules a function to run repeatedly every `amount` `unit`s. Returns an interval ID. All active intervals are automatically cancelled when plugins are reloaded.
-
-- `unit`: `"ms"` (default), `"s"` / `"seconds"`, `"m"` / `"minutes"`, `"h"` / `"hours"`, `"d"` / `"days"`
-
-```lua
--- Check for expired polls every 60 seconds
-navi.set_interval(function()
-    local now = os.time()
-    for pid in (navi.db.get("polls:active") or ""):gmatch("[^,]+") do
-        local poll = navi.json.decode(navi.db.get("polls:data:" .. pid) or "")
-        if poll and not poll.closed and now >= poll.expires_at then
-            close_poll(pid)
-        end
-    end
-end, 60, "s")
-```
-
-```lua
--- Send a message every 5 minutes
-local my_interval = navi.set_interval(function()
-    navi.say(ANNOUNCE_CHANNEL, "Reminder: read the rules!")
-end, 5, "m")
-```
-
-### `navi.clear_interval(id)`
-
-Cancels a running interval by the ID returned from `set_interval`. No-op if the ID doesn't exist.
-
-```lua
-navi.clear_interval(my_interval)
-```
-
----
-
-## 23. Permissions
+## Permissions
 
 The permissions system maps users and roles to a level hierarchy. Levels from lowest to highest: `"user"` → `"helper"` → `"moderator"` → `"admin"` → `"owner"`. Permissions are configured from the TUI.
 
@@ -1380,24 +1243,16 @@ The permissions system maps users and roles to a level hierarchy. Levels from lo
 
 Checks whether the user meets or exceeds the required level. If they **do not**, it automatically sends them an ephemeral denial message and returns `false`. If they **do**, it returns `true`.
 
-**This is the standard way to gate admin-only commands.** The pattern is always:
-
 ```lua
-if not navi.require_perm(ctx, "admin") then return end
-```
-
-```lua
-navi.create_slash("delete_all_posts", "Nuke every post", {}, function(ctx)
+navi.create_slash("nuke", "Delete all posts", {}, function(ctx)
     if not navi.require_perm(ctx, "moderator") then return end
-
     -- Only reaches here if the user is a moderator, admin, or owner
-    -- ... do the dangerous thing ...
 end)
 ```
 
 ### `navi.check_perm(ctx, level)`
 
-Like `require_perm` but **silent** — it just returns `true` or `false` with no side effects. Use this when you want to adjust behaviour based on permissions without sending a denial.
+Like `require_perm` but **silent** — returns `true` or `false` with no side effects. Use when you want to adjust behavior based on permissions without sending a denial.
 
 ```lua
 if navi.check_perm(ctx, "moderator") then
@@ -1416,82 +1271,30 @@ ctx.reply("Your permission level is: " .. level)
 
 ---
 
-## 24. Plugin Load Order
+# Reference
 
-By default, plugins load in alphabetical order. If your plugin uses data or functions from another plugin (e.g. casino reading economy balances), you need to make sure the dependency loads first.
-
-### `navi.depends_on(plugin_name)`
-
-Declares that this plugin depends on another. The Rust engine scans for these calls **before** executing any Lua and performs a topological sort to ensure dependencies load first.
-
-Call this at the **very top** of your file, before any other code.
-
-```lua
--- casino.lua
-navi.depends_on("economy")  -- economy.lua will always load before casino.lua
-
-navi.log.info("Loading Casino Plugin")
--- ...
-```
-
-You can declare multiple dependencies:
-
-```lua
-navi.depends_on("economy")
-navi.depends_on("leveling")
-```
-
-> **Note:** `navi.depends_on` is a **no-op at runtime** — it does nothing when Lua actually executes it. Its only job is to be visible in the source file for the Rust loader to scan.
-
----
-
-## 25. Bot Status / Presence
-
-### `navi.set_status(activity_type, text)`
-
-Changes the bot's Discord presence (the "Playing X" message shown in the member list).
-
-- `activity_type`: `"playing"`, `"listening"`, `"watching"`, `"competing"`, `"custom"`, or `"none"`
-
-```lua
-navi.set_status("watching", "over the server")
-navi.set_status("playing", "with fire")
-navi.set_status("listening", "your complaints")
-navi.set_status("none", "")  -- clears the status
-```
-
----
-
-## 26. Data Type Reference
+## Data Types
 
 ### Snowflake IDs
 
-Discord uses 64-bit integer "snowflake" IDs for users, channels, guilds, messages, roles, etc. In Lua 5.4 these are handled as integers, but **always use `tostring()` before passing them to `navi.db.set` or string concatenation** to be safe.
+Discord uses 64-bit integer "snowflake" IDs for users, channels, guilds, messages, roles, etc. Always use `tostring()` before passing them to `navi.db.set` or string concatenation.
 
 ```lua
--- Safe pattern:
 local uid = tostring(msg.author_id)
 navi.db.set("xp:" .. uid, tostring(new_xp))
 ```
 
 ### Discord Mentions
 
-In `description` or message text, you can mention users and roles with Discord's mention syntax. Discord renders these as clickable mentions.
+In `description` or message text, you can use Discord's mention syntax:
 
 ```lua
--- Mention a user
-"<@" .. user_id .. ">"
-
--- Mention a role
-"<@&" .. role_id .. ">"
-
--- Mention a channel
-"<#" .. channel_id .. ">"
+"<@"  .. user_id    .. ">"   -- mention a user
+"<@&" .. role_id    .. ">"   -- mention a role
+"<#"  .. channel_id .. ">"   -- mention a channel
 ```
 
----
-
-## 27. Patterns, Tips & Common Mistakes
+## Patterns & Common Mistakes
 
 ### Always default database reads
 
@@ -1509,19 +1312,19 @@ local new_xp = xp + 10
 
 ### Convert IDs to strings early
 
-Message and user IDs come from the engine as numbers. Store them as strings by calling `tostring()` right away:
+Message and user IDs come from the engine as numbers. Store them as strings right away:
 
 ```lua
 navi.register(function(msg)
-    local uid = tostring(msg.author_id)  -- do this once, at the top
+    local uid = tostring(msg.author_id)
     local bal = tonumber(navi.db.get("balance:" .. uid)) or 0
     navi.db.set("balance:" .. uid, tostring(bal + 5))
 end)
 ```
 
-### Check `author_bot` in message listeners
+### Guard against bot feedback loops
 
-If you respond to every message and your bot also sends messages, you'll get an infinite loop. Always guard against it:
+If you respond to every message and your bot also sends messages, you'll get an infinite loop:
 
 ```lua
 navi.register(function(msg)
@@ -1532,42 +1335,39 @@ end)
 
 ### Use `ctx.defer()` for slow commands
 
-Any slash command that makes an HTTP request, does a heavy database query, or takes more than ~2 seconds to respond **must** call `ctx.defer()` first. Discord will time out the interaction otherwise.
+Any slash command that makes an HTTP request or takes more than ~2 seconds to respond **must** call `ctx.defer()` first:
 
 ```lua
 navi.create_slash("weather", "Get current weather", {
     { name = "city", description = "City name", type = "string", required = true }
 }, function(ctx)
-    ctx.defer()  -- tell Discord to wait
-
-    local url = "https://api.weather.example.com/city/" .. ctx.args.city
-    local body = navi.http.get(url, nil)
+    ctx.defer()
+    local body = navi.http.get("https://api.weather.example.com/city/" .. ctx.args.city, nil)
     local data = body and navi.json.decode(body)
-
     if data then
-        ctx.followup("🌤️ " .. ctx.args.city .. ": " .. data.description .. ", " .. data.temp .. "°C")
+        ctx.followup("🌤️ " .. ctx.args.city .. ": " .. data.description)
     else
         ctx.followup("❌ Couldn't fetch weather data.", true)
     end
 end)
 ```
 
-### Use the event bus for cross-plugin data
+### Use the event bus for cross-plugin writes
 
-Don't read another plugin's database keys directly when the event bus is available. The economy plugin exposes clean events:
+Don't modify another plugin's data directly when the event bus is available:
 
 ```lua
 -- Preferred: use the public API
 navi.emit("economy:add",    { user_id = uid, amount = 100 })
 navi.emit("economy:remove", { user_id = uid, amount = 50  })
 
--- Acceptable: read economy's balance (read-only, no side effects)
+-- Acceptable: read-only access to another plugin's data
 local balance = tonumber(navi.db.get("economy:balance:" .. uid)) or 0
 ```
 
 ### Store complex data as JSON
 
-The database stores strings only. If you need to save a table (arrays, nested objects), encode it with `navi.json.encode` first:
+The database stores strings only. Encode tables before saving:
 
 ```lua
 local poll_data = {
@@ -1578,59 +1378,44 @@ local poll_data = {
 }
 navi.db.set("polls:data:42", navi.json.encode(poll_data))
 
--- Reading back:
-local raw = navi.db.get("polls:data:42")
+local raw  = navi.db.get("polls:data:42")
 local poll = raw and navi.json.decode(raw)
 if poll and not poll.closed then
     navi.log.info("Poll is still open: " .. poll.title)
 end
 ```
 
-### Use local functions to avoid global namespace pollution
+### Use `local` for all helper functions
 
-Declare all helper functions as `local`. If two plugins both define a non-local function with the same name, the second one silently overwrites the first.
+Declaring a non-local function pollutes Lua globals. If two plugins define a non-local function with the same name, the second one silently overwrites the first.
 
 ```lua
--- Bad — pollutes globals, may conflict with other plugins
+-- Bad
 function get_balance(uid)
     return tonumber(navi.db.get("balance:" .. uid)) or 0
 end
 
--- Good — scoped to this plugin file
+-- Good
 local function get_balance(uid)
     return tonumber(navi.db.get("balance:" .. uid)) or 0
 end
 ```
 
-### Reloading and re-registration
+### Reloading and global state
 
-When you press `r` in the TUI, every plugin file is re-executed from scratch. This means:
+When you press `r` in the TUI, every plugin file is re-executed from scratch:
 
 - All `navi.register`, `navi.create_slash`, `navi.register_component`, and `navi.register_modal` calls run again — this is expected and correct.
-- Any **global variables** your plugin set in the previous load are still there. If your plugin does something like `INITIALIZED = true` and checks it, that check will be `true` on the second load. Be careful.
+- Any **global variables** set during the previous load are still present. If your plugin does something like `INITIALIZED = true` and checks it, that check will be `true` on the second load.
 - Intervals are cancelled automatically before reload. You don't need to track and cancel them yourself.
 
-### Mentioning vs looking up roles/channels from config
+### Config IDs are ready to use
 
-Config values of type `channel` and `role` store the snowflake ID as a string. You can use them directly in Discord mention syntax:
+Config values of type `channel` and `role` store the snowflake ID as a string. Use them directly — no extra lookup needed:
 
 ```lua
 local role_id = navi.db.get("config:my_plugin:mod_role")
 
--- Mention it in a message
 navi.say(channel_id, "Paging <@&" .. role_id .. ">!")
-
--- Use it to assign a role
 navi.add_role(guild_id, user_id, role_id)
-```
-
-No extra lookup is needed. The ID is the ID.
-
-### The `"config:"` prefix
-
-When `navi.register_config` writes defaults to the database, it stores them under the key `config:plugin_name:key`. You **must** use this exact prefix when reading config values manually — `navi.db.get` auto-namespacing does **not** apply to `config:` keys (because the `config:` prefix already makes the key explicit with a colon).
-
-```lua
--- Reading a config value (always use the full key)
-local reward = tonumber(navi.db.get("config:economy:message_reward")) or 5
 ```

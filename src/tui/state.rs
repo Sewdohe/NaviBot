@@ -16,6 +16,13 @@ pub enum ConfigPane {
     ItemEditor,
 }
 
+#[derive(PartialEq)]
+pub enum FocusedPanel {
+    Main,
+    Views,
+    Actions,
+}
+
 pub struct AppState {
     // Log view
     pub logs: Vec<(LogLevel, String)>,
@@ -50,6 +57,10 @@ pub struct AppState {
     pub plugin_browser_entries: Vec<PluginEntry>,
     pub plugin_browser_loading: bool,
     pub plugin_browser_status: String,
+    // Sidebar navigation
+    pub focused_panel: FocusedPanel,
+    pub sidebar_views_cursor: usize,
+    pub sidebar_actions_cursor: usize,
 }
 
 impl Default for AppState {
@@ -81,6 +92,9 @@ impl Default for AppState {
             plugin_browser_entries: Vec::new(),
             plugin_browser_loading: false,
             plugin_browser_status: String::new(),
+            focused_panel: FocusedPanel::Main,
+            sidebar_views_cursor: 0,
+            sidebar_actions_cursor: 0,
         }
     }
 }

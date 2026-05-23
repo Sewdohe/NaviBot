@@ -20,10 +20,17 @@ use types::{AdminCommand, BotEvent, ConfigType, LogLevel, PluginEntry};
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let exe_path = std::env::current_exe().unwrap();
     let exe_dir = exe_path.parent().unwrap();
-    std::env::set_current_dir(exe_dir).expect("Failed to set working directory to binary location");
-    let env_path = exe_dir.join(".env");
-    dotenvy::from_path(env_path).ok();
-    // dotenv().ok();
+
+    // When running as an installed binary from PATH, plugins/ won't be in the
+    // shell's CWD. Switch to the binary's directory so all relative paths resolve.
+    // Skip this when running via `cargo run` — the project root already has plugins/.
+    if !std::path::Path::new("plugins").exists() {
+        std::env::set_current_dir(exe_dir)
+            .expect("Failed to set working directory to binary location");
+    }
+
+    // Load .env from wherever CWD ended up (project root for dev, exe_dir for installed)
+    dotenvy::dotenv().ok();
 
     // 1. CHANNELS
     // TUI <-> Bot communication
@@ -58,7 +65,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let tx_for_loop = tx_to_tui.clone();
 
         rt.block_on(async move {
-            let token = std::env::var("DISCORD_TOKEN").expect("missing DISCORD_TOKEN");
+            let token = match std::env::var("DISCORD_TOKEN") {
+                Ok(t) => t,
+                Err(_) => {
+                    let _ = tx_for_setup.send(BotEvent::Log(
+                        LogLevel::Error,
+                        "DISCORD_TOKEN not set — add it to your .env file".into(),
+                    ));
+                    return;
+                }
+            };
             let intents = serenity::GatewayIntents::non_privileged()
                 | serenity::GatewayIntents::MESSAGE_CONTENT
                 | serenity::GatewayIntents::GUILD_MEMBERS;
@@ -134,9 +150,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // We grab a clone of the HTTP client immediately after the client is built
             let http_for_loop = client.http.clone();
 
+            let tx_for_client = tx_for_loop.clone();
             tokio::spawn(async move {
                 if let Err(why) = client.start().await {
-                    println!("Client error: {:?}", why);
+                    let _ = tx_for_client.send(BotEvent::Log(
+                        LogLevel::Error,
+                        format!("Discord client error: {}", why),
+                    ));
                 }
             });
 

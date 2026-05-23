@@ -1,7 +1,7 @@
 use crate::types::{AdminCommand, ConfigRegistry, ConfigType, LogLevel, SharedDiscordState};
 use crossterm::event::KeyCode;
 use tokio::sync::mpsc::UnboundedSender;
-use super::state::{AppMode, AppState, ConfigPane};
+use super::state::{AppMode, AppState, ConfigPane, FocusedPanel};
 
 
 /// Returns `true` if the caller should break the main loop (quit requested).
@@ -45,16 +45,65 @@ pub fn handle_input(
             }
             KeyCode::Char('c') if !state.is_editing && !state.is_dropdown_open && !state.item_subfield_editing && !state.item_dropdown_open => {
                 state.mode = AppMode::Config;
+                state.sidebar_views_cursor = 1;
             }
             KeyCode::Char('l') if !state.is_editing && !state.is_dropdown_open && !state.item_subfield_editing && !state.item_dropdown_open => {
                 state.mode = AppMode::Logs;
+                state.sidebar_views_cursor = 0;
             }
             KeyCode::Char('p') if !state.is_editing && !state.is_dropdown_open && !state.item_subfield_editing && !state.item_dropdown_open => {
                 state.mode = AppMode::PluginBrowser;
+                state.sidebar_views_cursor = 2;
                 if state.plugin_browser_entries.is_empty() && !state.plugin_browser_loading {
                     state.plugin_browser_loading = true;
                     state.plugin_browser_status = "Fetching…".to_string();
                     let _ = tx.send(AdminCommand::FetchPluginList);
+                }
+            }
+
+            // --- SIDEBAR NAVIGATION ---
+            KeyCode::Tab if !state.is_editing && !state.is_dropdown_open && !state.item_subfield_editing && !state.item_dropdown_open => {
+                state.focused_panel = match state.focused_panel {
+                    FocusedPanel::Views   => FocusedPanel::Actions,
+                    FocusedPanel::Actions => FocusedPanel::Main,
+                    FocusedPanel::Main    => FocusedPanel::Views,
+                };
+            }
+            KeyCode::Up if state.focused_panel == FocusedPanel::Views && !state.is_editing && !state.is_dropdown_open => {
+                state.sidebar_views_cursor = state.sidebar_views_cursor.saturating_sub(1);
+            }
+            KeyCode::Down if state.focused_panel == FocusedPanel::Views && !state.is_editing && !state.is_dropdown_open => {
+                state.sidebar_views_cursor = (state.sidebar_views_cursor + 1).min(2);
+            }
+            KeyCode::Up if state.focused_panel == FocusedPanel::Actions && !state.is_editing && !state.is_dropdown_open => {
+                state.sidebar_actions_cursor = state.sidebar_actions_cursor.saturating_sub(1);
+            }
+            KeyCode::Down if state.focused_panel == FocusedPanel::Actions && !state.is_editing && !state.is_dropdown_open => {
+                state.sidebar_actions_cursor = (state.sidebar_actions_cursor + 1).min(4);
+            }
+            KeyCode::Enter if state.focused_panel == FocusedPanel::Views && !state.is_editing && !state.is_dropdown_open && !state.item_subfield_editing && !state.item_dropdown_open => {
+                state.mode = match state.sidebar_views_cursor {
+                    0 => AppMode::Logs,
+                    1 => AppMode::Config,
+                    _ => {
+                        if state.plugin_browser_entries.is_empty() && !state.plugin_browser_loading {
+                            state.plugin_browser_loading = true;
+                            state.plugin_browser_status = "Fetching…".to_string();
+                            let _ = tx.send(AdminCommand::FetchPluginList);
+                        }
+                        AppMode::PluginBrowser
+                    }
+                };
+                state.focused_panel = FocusedPanel::Main;
+            }
+            KeyCode::Enter if state.focused_panel == FocusedPanel::Actions && !state.is_editing && !state.is_dropdown_open && !state.item_subfield_editing && !state.item_dropdown_open => {
+                match state.sidebar_actions_cursor {
+                    0 => { let _ = tx.send(AdminCommand::Reload); }
+                    1 => { let _ = tx.send(AdminCommand::Reload); }
+                    2 => { let _ = tx.send(AdminCommand::RefreshCache); }
+                    3 => { let _ = tx.send(AdminCommand::CheckUpdate); }
+                    4 => { let _ = tx.send(AdminCommand::Shutdown); return true; }
+                    _ => {}
                 }
             }
 

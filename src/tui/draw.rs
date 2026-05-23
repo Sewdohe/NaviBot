@@ -1,12 +1,12 @@
 use crate::types::{ConfigRegistry, ConfigType, LogLevel, SharedDiscordState};
 use ratatui::{
-    layout::{Constraint, Direction, Layout},
+    layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, List, ListItem, Paragraph},
     Frame,
 };
-use super::state::{AppMode, AppState, ConfigPane};
+use super::state::{AppMode, AppState, ConfigPane, FocusedPanel};
 
 pub fn draw(
     f: &mut Frame,
@@ -32,7 +32,16 @@ pub fn draw(
     ]));
     f.render_widget(header, main_chunks[0]);
 
-    // --- 2. ROUTE THE REST OF THE APP ---
+    // --- 2. SIDEBAR + CONTENT SPLIT ---
+    let body_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(20), Constraint::Min(0)])
+        .split(main_chunks[1]);
+
+    draw_sidebar(f, state, body_chunks[0]);
+    let content_area = body_chunks[1];
+
+    // --- 3. ROUTE THE MAIN CONTENT ---
     if state.mode == AppMode::Logs {
         // --- LOGS VIEW ---
         let chunks = Layout::default()
@@ -40,9 +49,9 @@ pub fn draw(
             .margin(1)
             .constraints([
                 Constraint::Min(1),
-                Constraint::Length(3),
+                Constraint::Length(1),
             ].as_ref())
-            .split(main_chunks[1]);
+            .split(content_area);
 
         let plugin_style = Style::default().fg(Color::Magenta);
         let log_lines: Vec<Line> = state.logs.iter().map(|(level, msg)| {
@@ -88,28 +97,23 @@ pub fn draw(
 
         f.render_widget(logs_pane, chunks[0]);
 
-        let input_text = if state.input_mode {
-            format!("> {}_", state.input_buffer)
-        } else {
-            String::from("Up/Down: scroll | 'q' quit | 'r' reload | 'u' re-cache | 'U' update | 'i' type | 'c' config | 'p' plugins")
-        };
-
-        let input_widget = Paragraph::new(input_text)
-            .style(if state.input_mode { Style::default().fg(Color::Yellow) } else { Style::default() })
-            .block(Block::default().borders(Borders::ALL).title(" Controls "));
-        f.render_widget(input_widget, chunks[1]);
+        if state.input_mode {
+            let input_widget = Paragraph::new(format!("> {}_", state.input_buffer))
+                .style(Style::default().fg(Color::Yellow));
+            f.render_widget(input_widget, chunks[1]);
+        }
 
     } else if state.mode == AppMode::Config {
         // --- CONFIG VIEW ---
-        let vertical_chunks = Layout::default()
+        let view_chunks = Layout::default()
                 .direction(Direction::Vertical)
-                .constraints([Constraint::Min(0), Constraint::Length(3)])
-                .split(main_chunks[1]);
+                .constraints([Constraint::Min(0), Constraint::Length(1)])
+                .split(content_area);
 
         let chunks = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
-                .split(vertical_chunks[0]);
+                .split(view_chunks[0]);
 
         let registry = config_registry.lock().unwrap();
         let mut plugin_names: Vec<String> = registry.keys().cloned().collect();
@@ -655,51 +659,32 @@ pub fn draw(
             }
         }
 
-        // --- DYNAMIC CONTROLS FOOTER ---
-        let help_text = if state.item_dropdown_open {
-            "Up/Down to scroll | Enter to confirm | Esc to cancel"
-        } else if state.item_subfield_editing {
-            "Type value | Enter to confirm | Esc to cancel"
-        } else if state.config_pane == ConfigPane::ItemEditor {
-            "Up/Down to select sub-field | Enter to edit | s=save  Esc=back"
-        } else if state.config_pane == ConfigPane::ListManager {
-            "Up/Down to select item | Enter=edit | n=add | d=delete | Esc=back"
-        } else if state.is_dropdown_open {
-            "Press 'Up/Down' to scroll | 'Enter' to confirm selection | 'Esc' to cancel"
-        } else if state.is_editing {
-            "Type your value | Press 'Enter' to save | 'Esc' to cancel"
-        } else if state.config_pane == ConfigPane::PluginList {
-            "Press 'Up/Down' to select plugin | 'Right' or 'Enter' to configure | 'l' for Logs | 'q' to quit"
+        // --- CONTEXT HINT (only shown during active editing) ---
+        let hint = if state.item_dropdown_open || state.is_dropdown_open {
+            Some("Up/Down to scroll | Enter to confirm | Esc to cancel")
+        } else if state.item_subfield_editing || state.is_editing {
+            Some("Enter to save | Esc to cancel")
         } else {
-            "Press 'Up/Down' to select field | 'Enter' to edit | 'Left' or 'Esc' for plugins | 'l' for Logs"
+            None
         };
-
-        let controls = Paragraph::new(help_text)
-            .style(Style::default().fg(Color::DarkGray))
-            .block(Block::default()
-                .title(" Controls ")
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::White))
+        if let Some(text) = hint {
+            f.render_widget(
+                Paragraph::new(text).style(Style::default().fg(Color::DarkGray)),
+                view_chunks[1],
             );
-
-        f.render_widget(controls, vertical_chunks[1]);
+        }
     } else if state.mode == AppMode::PluginBrowser {
         // --- PLUGIN BROWSER VIEW ---
-        let vertical_chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Min(0), Constraint::Length(3)])
-            .split(main_chunks[1]);
-
         if state.plugin_browser_loading {
             let loading = Paragraph::new("Fetching plugin list…")
                 .style(Style::default().fg(Color::Yellow))
                 .block(Block::default().title(" Plugin Browser ").borders(Borders::ALL));
-            f.render_widget(loading, vertical_chunks[0]);
+            f.render_widget(loading, content_area);
         } else {
             let chunks = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([Constraint::Percentage(35), Constraint::Percentage(65)])
-                .split(vertical_chunks[0]);
+                .split(content_area);
 
             // Read installed versions from the sidecar written by download_plugin.
             // Format: { "plugin_id": "1.0.0", ... }
@@ -830,11 +815,63 @@ pub fn draw(
                 .block(Block::default().title(" Plugin Details ").borders(Borders::ALL).border_style(Style::default().fg(Color::White)));
             f.render_widget(right_pane, chunks[1]);
         }
-
-        // Footer controls
-        let controls = Paragraph::new("Up/Down select | Enter=install/update | d=delete | f=refresh | l=logs | q=quit")
-            .style(Style::default().fg(Color::DarkGray))
-            .block(Block::default().title(" Controls ").borders(Borders::ALL).border_style(Style::default().fg(Color::White)));
-        f.render_widget(controls, vertical_chunks[1]);
     }
+}
+
+fn draw_sidebar(f: &mut Frame, state: &AppState, area: Rect) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(5), Constraint::Min(0)])
+        .split(area);
+
+    // --- VIEWS PANEL ---
+    let views_focused = state.focused_panel == FocusedPanel::Views;
+    let active_view_idx = match state.mode {
+        AppMode::Logs => 0,
+        AppMode::Config => 1,
+        AppMode::PluginBrowser => 2,
+    };
+    let view_labels = ["Logs", "Config", "Plugins"];
+    let view_items: Vec<ListItem> = view_labels.iter().enumerate().map(|(i, label)| {
+        let is_cursor = views_focused && i == state.sidebar_views_cursor;
+        let is_active = i == active_view_idx;
+        if is_cursor {
+            ListItem::new(format!("> {}", label))
+                .style(Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD))
+        } else if is_active {
+            ListItem::new(format!("● {}", label))
+                .style(Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+        } else {
+            ListItem::new(format!("  {}", label))
+        }
+    }).collect();
+
+    let views_panel = List::new(view_items).block(
+        Block::default()
+            .title(" Views ")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(if views_focused { Color::Green } else { Color::DarkGray })),
+    );
+    f.render_widget(views_panel, chunks[0]);
+
+    // --- ACTIONS PANEL ---
+    let actions_focused = state.focused_panel == FocusedPanel::Actions;
+    let action_labels = ["Reload", "Sync Cmds", "Refresh", "Update", "Quit"];
+    let action_items: Vec<ListItem> = action_labels.iter().enumerate().map(|(i, label)| {
+        let is_cursor = actions_focused && i == state.sidebar_actions_cursor;
+        if is_cursor {
+            ListItem::new(format!("> {}", label))
+                .style(Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD))
+        } else {
+            ListItem::new(format!("  {}", label))
+        }
+    }).collect();
+
+    let actions_panel = List::new(action_items).block(
+        Block::default()
+            .title(" Actions ")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(if actions_focused { Color::Green } else { Color::DarkGray })),
+    );
+    f.render_widget(actions_panel, chunks[1]);
 }

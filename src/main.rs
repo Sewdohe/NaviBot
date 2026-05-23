@@ -8,7 +8,6 @@ mod updater;
 const PLUGIN_MANIFEST_URL: &str =
     "https://raw.githubusercontent.com/Sewdohe/navibot-plugins/main/manifest.json";
 
-use dotenvy::dotenv;
 use mlua::Lua;
 use poise::serenity_prelude as serenity;
 use std::{
@@ -19,7 +18,12 @@ use tokio::sync::mpsc;
 use types::{AdminCommand, BotEvent, ConfigType, LogLevel, PluginEntry};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    dotenv().ok();
+    let exe_path = std::env::current_exe().unwrap();
+    let exe_dir = exe_path.parent().unwrap();
+    std::env::set_current_dir(exe_dir).expect("Failed to set working directory to binary location");
+    let env_path = exe_dir.join(".env");
+    dotenvy::from_path(env_path).ok();
+    // dotenv().ok();
 
     // 1. CHANNELS
     // TUI <-> Bot communication
